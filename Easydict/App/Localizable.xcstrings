@@ -1088,6 +1088,40 @@
         }
       }
     },
+    "enable_youdao_ocr" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable Youdao OCR "
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开启有道OCR识别"
+          }
+        }
+      }
+    },
+    "enable_youdao_ocr_desc" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use a Youdao OCR for identification after a default OCR failure"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在默认OCR识别失败后使用有道OCR进行识别"
+          }
+        }
+      }
+    },
     "equal_first_and_second_language" : {
       "localizations" : {
         "en" : {
