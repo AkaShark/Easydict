@@ -76,7 +76,13 @@ public class AppleLanguageDetector: NSObject {
     public private(set) var englishCharacterRatio: Double = 0.0
     public private(set) var hasMixedScripts: Bool = false
 
+    /// Raw language probabilities from Apple's NaturalLanguage framework
+    ///
+    /// - Note: These probabilities may be an empty dictionary for certain edge cases
+    /// such as numeric-only text ("729") or unrecognizable input.
     public private(set) var rawProbabilities: [NLLanguage: Double] = [:]
+
+    /// Adjusted language probabilities after applying user preference weights
     public private(set) var adjustedProbabilities: [NLLanguage: Double] = [:]
 
     /// Detect the most likely language of the provided text
@@ -444,7 +450,7 @@ public class AppleLanguageDetector: NSObject {
             return nil
         }
 
-        if isClassicalChineseDetectionEnabled, Configuration.shared.beta {
+        if isClassicalChineseDetectionEnabled, MyConfiguration.shared.beta {
             // Initialize ChineseDetection if not already created
             if chineseGenreAnalyzer == nil {
                 chineseGenreAnalyzer = ChineseGenreAnalyzer(text: text)

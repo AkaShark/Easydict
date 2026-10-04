@@ -17,7 +17,12 @@
 #import "EZSchemeParser.h"
 #import "EZCopyButton.h"
 #import "NSImage+EZSymbolmage.h"
-#import "Easydict-Swift.h"
+
+/// Debounce delay before auto querying while the user keeps typing.
+/// Kept relatively long since each query is heavy, especially for
+/// streaming LLM services that repeatedly re-layout the result view.
+static const NSTimeInterval EZAutoQueryWhenTextChangedDelay = 0.8;
+
 
 @interface EZQueryView () <NSTextViewDelegate, NSTextStorageDelegate>
 
@@ -34,6 +39,7 @@
 @property (nonatomic, assign) NSTimeInterval lastRecordTimestamp;
 
 @property (nonatomic, strong) EZSchemeParser *schemeParser;
+@property (nonatomic, strong) id fontSizeObserver;
 
 @end
 
@@ -48,10 +54,17 @@
     return self;
 }
 
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    if (_fontSizeObserver) {
+        [[NSNotificationCenter defaultCenter] removeObserver:_fontSizeObserver];
+    }
+}
+
 - (void)setup {
     self.wantsLayer = YES;
     self.layer.cornerRadius = EZCornerRadius_8;
-    [self.layer excuteLight:^(id _Nonnull x) {
+    [self.layer executeLight:^(id _Nonnull x) {
         [x setBackgroundColor:[NSColor ez_queryViewBgLightColor].CGColor];
     } dark:^(id _Nonnull x) {
         [x setBackgroundColor:[NSColor ez_queryViewBgDarkColor].CGColor];
@@ -73,26 +86,37 @@
     textView.delegate = self;
     textView.textStorage.delegate = self;
     textView.textContainerInset = CGSizeMake(6, 8);
-    textView.font = [NSFont systemFontOfSize:14 * Configuration.shared.fontSizeRatio];
+    textView.font = [NSFont systemFontOfSize:14 * MyConfiguration.shared.fontSizeRatio];
     
     mm_weakify(self);
     [textView setPasteTextBlock:^(NSString *_Nonnull text) {
+        mm_strongify(self);
         [self highlightAllLinks];
-        
+
+        // Pasting already triggered `textDidChange`, which may have
+        // scheduled a debounced auto query. Pasting is governed by the
+        // dedicated "auto query pasted text" preference instead, so always
+        // drop that pending debounce and let `pasteTextBlock` decide whether
+        // to query. This avoids a duplicate request when paste auto-query is
+        // on, and honors the paste preference when it is off.
+        [self cancelAutoQuery];
+
         if (self.pasteTextBlock) {
             self.pasteTextBlock(text);
         }
     }];
 
-    [[NSNotificationCenter defaultCenter] addObserverForName:NSNotification.didChangeFontSize
+    self.fontSizeObserver = [[NSNotificationCenter defaultCenter] addObserverForName:NSNotification.didChangeFontSize
                                                       object:nil
                                                        queue:NSOperationQueue.mainQueue
                                                   usingBlock:^(NSNotification * _Nonnull notification) {
-        self.textView.font = [NSFont systemFontOfSize:14 * Configuration.shared.fontSizeRatio];
+        mm_strongify(self);
+        self.textView.font = [NSFont systemFontOfSize:14 * MyConfiguration.shared.fontSizeRatio];
     }];
     
     // When programatically setting the text, like auto select text, or OCR text.
     [textView setUpdateTextBlock:^(NSString * _Nonnull text) {
+        mm_strongify(self);
         [self updateInputText:text];
     }];
     
@@ -149,7 +173,7 @@
     [detectButton setMenuItemSeletedBlock:^(EZLanguage language) {
         mm_strongify(self);
         self.queryModel.needDetectLanguage = NO;
-        NSString *text = [[self copiedText] trim];
+        NSString *text = [[self copiedText] ns_trim];
         
         // Do not set text language if text is OCR merged text.
         if (text.length && !self.queryModel.ocrImage) {
@@ -392,6 +416,9 @@
         if (flags & NSEventModifierFlagShift) {
             return NO;
         } else {
+            // Pressing Enter queries immediately, so drop any pending
+            // debounced auto query to avoid a duplicate request.
+            [self cancelAutoQuery];
             if (self.enterActionBlock) {
                 MMLogInfo(@"enterActionBlock");
                 self.enterActionBlock(self.copiedText);
@@ -470,12 +497,61 @@
 - (void)textDidChange:(NSNotification *)notification {
 //    NSString *text = [self copiedText];
 //    MMLogInfo(@"textDidChange: %@", text);
-    
+
     self.queryModel.actionType = EZActionTypeInputQuery;
     self.queryModel.needDetectLanguage = YES;
-    
+
     // textView.string has been changed, we don't need to update it again.
     [self updateInputText:nil];
+
+    // Optionally auto translate while typing, debounced so we only query
+    // once the user pauses instead of on every keystroke.
+    [self scheduleAutoQueryWhenTextChanged];
+}
+
+// Cancel the pending auto query when the text view ends editing. Window
+// closing and hiding are handled separately by the window lifecycle.
+- (void)textDidEndEditing:(NSNotification *)notification {
+    [self cancelAutoQuery];
+}
+
+/// Schedule a debounced auto query when "auto query when text changed" is
+/// enabled. The IME composing check is deferred to fire time (not here), so
+/// committed CJK text still queries: at commit `hasMarkedText` may still be
+/// YES, but by the time the debounce fires composition has settled.
+- (void)scheduleAutoQueryWhenTextChanged {
+    [self cancelAutoQuery];
+
+    if (!MyConfiguration.shared.autoQueryWhenTextChanged) {
+        return;
+    }
+
+    [self performSelector:@selector(autoQueryWhenTextChanged)
+               withObject:nil
+               afterDelay:EZAutoQueryWhenTextChangedDelay];
+}
+
+- (void)cancelAutoQuery {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                             selector:@selector(autoQueryWhenTextChanged)
+                                               object:nil];
+}
+
+- (void)autoQueryWhenTextChanged {
+    // Skip while the IME still has marked (composing) text so we don't query
+    // half-typed input; the next textDidChange reschedules after another
+    // keystroke or once the user commits.
+    if (self.textView.hasMarkedText) {
+        return;
+    }
+
+    NSString *text = [[self copiedText] ns_trim];
+    if (text.length == 0) {
+        return;
+    }
+    if (self.enterActionBlock) {
+        self.enterActionBlock([self copiedText]);
+    }
 }
 
 

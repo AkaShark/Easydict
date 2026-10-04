@@ -8,7 +8,7 @@
 
 #import "EZEnumTypes.h"
 
-NSString *const EZServiceTypeKey = @"ServiceType";
+#import "OrderedDictionary+Variadic.h"
 
 #pragma mark - EZServiceType
 NSString *const EZServiceTypeGoogle = @"Google";
@@ -33,12 +33,17 @@ NSString *const EZServiceTypeDeepSeek = @"DeepSeek";
 NSString *const EZServiceTypeAppleDictionary = @"AppleDictionary";
 NSString *const EZServiceTypeGroq = @"Groq";
 NSString *const EZServiceTypeZhipu = @"Zhipu";
+NSString *const EZServiceTypeMiniMax = @"MiniMax";
 NSString *const EZServiceTypeGitHub = @"GitHub";
+NSString *const EZServiceTypeDoubao = @"Doubao";
+NSString *const EZServiceTypeClaudeCode = @"ClaudeCode";
+NSString *const EZServiceTypeClaude = @"Claude";
+NSString *const EZServiceTypeCodexCLI = @"CodexCLI";
+NSString *const EZServiceTypeMDict = @"MDict";
 
 NSString *const EZQueryTextTypeKey = @"QueryTextType";
 NSString *const EZIntelligentQueryTextTypeKey = @"IntelligentQueryTextType";
 
-NSString *const EZDeepLTranslationAPIKey = @"EZDeepLTranslationAPIKey";
 
 #pragma mark - EZActionType
 NSString *const EZActionTypeNone = @"none";
@@ -76,6 +81,8 @@ NSString *const EZDefaultTTSServiceKey = @"EZDefaultTTSServiceKey";
             return @"dragged";
         case EZTriggerTypeShift:
             return @"shift";
+        case EZTriggerTypeSelectAllShortcut:
+            return @"select_all_shortcut";
     }
 }
 
@@ -92,7 +99,7 @@ NSString *const EZDefaultTTSServiceKey = @"EZDefaultTTSServiceKey";
     }
 }
 
-+ (MMOrderedDictionary<NSNumber *, NSString *> *)fixedWindowPositionDict {
++ (MMOrderedDictionary *)fixedWindowPositionDict {
     MMOrderedDictionary *dict = [[MMOrderedDictionary alloc] initWithKeysAndObjects:
                                                                  @(EZShowWindowPositionRight), NSLocalizedString(@"fixed_window_position_right", nil),
                                                                  @(EZShowWindowPositionMouse), NSLocalizedString(@"fixed_window_position_mouse", nil),
@@ -103,7 +110,7 @@ NSString *const EZDefaultTTSServiceKey = @"EZDefaultTTSServiceKey";
     return dict;
 }
 
-+ (MMOrderedDictionary<NSNumber *, NSString *> *)translateWindowTypeDict {
++ (MMOrderedDictionary *)translateWindowTypeDict {
     MMOrderedDictionary *dict = [[MMOrderedDictionary alloc] initWithKeysAndObjects:
                                                                  @(EZWindowTypeMini), NSLocalizedString(@"mini_window", nil),
                                                                  @(EZWindowTypeFixed), NSLocalizedString(@"fixed_window", nil),

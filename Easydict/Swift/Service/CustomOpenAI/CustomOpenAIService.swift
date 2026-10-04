@@ -9,6 +9,8 @@
 import Defaults
 import Foundation
 
+// MARK: - CustomOpenAIService
+
 @objc(EZCustomOpenAIService)
 class CustomOpenAIService: BaseOpenAIService {
     // MARK: Public
@@ -23,6 +25,8 @@ class CustomOpenAIService: BaseOpenAIService {
     }
 
     // MARK: Internal
+
+    override var supportsStreamingToggle: Bool { true }
 
     override func serviceTypeWithUniqueIdentifier() -> String {
         guard !uuid.isEmpty else {
@@ -42,7 +46,8 @@ class CustomOpenAIService: BaseOpenAIService {
     override func configurationListItems() -> Any {
         StreamConfigurationView(
             service: self,
-            showCustomNameSection: true
+            showCustomNameSection: true,
+            showStreamingToggle: true
         )
     }
 }

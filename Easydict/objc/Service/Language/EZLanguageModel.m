@@ -8,6 +8,7 @@
 
 #import "EZLanguageModel.h"
 
+
 NSString *const EZLanguageAuto = @"auto";
 NSString *const EZLanguageSimplifiedChinese = @"Simplified-Chinese";
 NSString *const EZLanguageTraditionalChinese = @"Traditional-Chinese";
@@ -17,6 +18,7 @@ NSString *const EZLanguageJapanese = @"Japanese";
 NSString *const EZLanguageKorean = @"Korean";
 NSString *const EZLanguageFrench = @"French";
 NSString *const EZLanguageSpanish = @"Spanish";
+NSString *const EZLanguageCatalan = @"Catalan";
 NSString *const EZLanguagePortuguese = @"Portuguese";
 NSString *const EZLanguageBrazilianPortuguese = @"Brazilian-Portuguese";
 NSString *const EZLanguageItalian = @"Italian";
@@ -60,14 +62,15 @@ NSString *const EZLanguageCroatian = @"Croatian";
 NSString *const EZLanguageMongolian = @"Mongolian";
 NSString *const EZLanguageHebrew = @"Hebrew";
 NSString *const EZLanguageGeorgian = @"Georgian";
+NSString *const EZLanguageUyghur = @"Uyghur";
 
 NSString *const EZLanguageUnsupported = @"unsupported";
 
 
 @implementation EZLanguageModel
 
-// 目前总计支持 50 种语言：简体中文，繁体中文，文言文，英语，日语，韩语，法语，西班牙语，葡萄牙语，意大利语，德语，俄语，阿拉伯语，瑞典语，罗马尼亚语，泰语，斯洛伐克语，荷兰语，匈牙利语，希腊语，丹麦语，芬兰语，波兰语，捷克语，土耳其语，立陶宛语，拉脱维亚语，乌克兰语，保加利亚语，印尼语，马来语，斯洛文尼亚语，爱沙尼亚语，越南语，波斯语，印地语，泰卢固语，泰米尔语，乌尔都语，菲律宾语，高棉语，老挝语，孟加拉语，缅甸语，挪威语，塞尔维亚语，克罗地亚语，蒙古语，希伯来语，格鲁吉亚语。
-+ (MMOrderedDictionary<EZLanguage, EZLanguageModel *> *)allLanguagesDict {
+// 目前总计支持 52 种语言：简体中文，繁体中文，文言文，英语，日语，韩语，法语，西班牙语，加泰罗尼亚语，葡萄牙语，意大利语，德语，俄语，阿拉伯语，瑞典语，罗马尼亚语，泰语，斯洛伐克语，荷兰语，匈牙利语，希腊语，丹麦语，芬兰语，波兰语，捷克语，土耳其语，立陶宛语，拉脱维亚语，乌克兰语，保加利亚语，印尼语，马来语，斯洛文尼亚语，爱沙尼亚语，越南语，波斯语，印地语，泰卢固语，泰米尔语，乌尔都语，菲律宾语，高棉语，老挝语，孟加拉语，缅甸语，挪威语，塞尔维亚语，克罗地亚语，蒙古语，希伯来语，格鲁吉亚语，维吾尔语。
++ (MMOrderedDictionary *)allLanguagesDict {
     static MMOrderedDictionary *allLanguages;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -152,6 +155,15 @@ NSString *const EZLanguageUnsupported = @"unsupported";
         spanishLang.voiceLocaleIdentifier = @"es_ES";
         spanishLang.code = @"es";
         [allLanguages setObject:spanishLang forKey:EZLanguageSpanish];
+
+        EZLanguageModel *catalanLang = [[EZLanguageModel alloc] init];
+        catalanLang.chineseName = @"加泰罗尼亚语";
+        catalanLang.englishName = EZLanguageCatalan;
+        catalanLang.nativeName = @"Català";
+        catalanLang.flagEmoji = @"🇪🇸";
+        catalanLang.voiceLocaleIdentifier = @"ca_ES";
+        catalanLang.code = @"ca";
+        [allLanguages setObject:catalanLang forKey:EZLanguageCatalan];
 
         EZLanguageModel *portuguese = [[EZLanguageModel alloc] init];
         portuguese.chineseName = @"葡萄牙语";
@@ -539,6 +551,15 @@ NSString *const EZLanguageUnsupported = @"unsupported";
         georgianLang.voiceLocaleIdentifier = @"ka_GE";
         georgianLang.code = @"ka";
         [allLanguages setObject:georgianLang forKey:EZLanguageGeorgian];
+
+        EZLanguageModel *uyghurLang = [[EZLanguageModel alloc] init];
+        uyghurLang.chineseName = @"维吾尔语";
+        uyghurLang.englishName = EZLanguageUyghur;
+        uyghurLang.nativeName = @"ئۇيغۇرچە";
+        uyghurLang.flagEmoji = @"🇨🇳";
+        uyghurLang.voiceLocaleIdentifier = @"ug_CN";
+        uyghurLang.code = @"ug";
+        [allLanguages setObject:uyghurLang forKey:EZLanguageUyghur];
     });
 
     return allLanguages;

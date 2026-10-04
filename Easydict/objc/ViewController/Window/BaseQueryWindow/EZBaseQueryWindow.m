@@ -11,6 +11,7 @@
 #import "EZWindowManager.h"
 #import "NSImage+EZResize.h"
 
+
 @interface EZBaseQueryWindow () <NSWindowDelegate, NSToolbarDelegate>
 
 @end
@@ -19,12 +20,21 @@
 
 - (instancetype)initWithWindowType:(EZWindowType)type {
     NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskClosable;
+    BOOL usesNonactivatingPanel = type != EZWindowTypeMain;
+    if (usesNonactivatingPanel) {
+        style |= NSWindowStyleMaskNonactivatingPanel;
+    }
 
     CGRect frame = [EZLayoutManager.shared windowFrameWithType:type];
 
     if (self = [super initWithContentRect:frame styleMask:style backing:NSBackingStoreBuffered defer:YES]) {
         self.windowType = type;
 
+        self.floatingPanel = usesNonactivatingPanel;
+        self.hidesOnDeactivate = NO;
+        if (usesNonactivatingPanel) {
+            self.collectionBehavior |= NSWindowCollectionBehaviorTransient | NSWindowCollectionBehaviorIgnoresCycle;
+        }
         self.movableByWindowBackground = YES;
         self.level = NSNormalWindowLevel;
         self.titlebarAppearsTransparent = YES;
@@ -32,18 +42,13 @@
         self.delegate = self;
         
         // !!!: must set backgroundColor
-        [self excuteLight:^(NSWindow *window) {
+        [self executeLight:^(NSWindow *window) {
             window.backgroundColor = [NSColor ez_mainViewBgLightColor];
         } dark:^(NSWindow *window) {
             window.backgroundColor = [NSColor ez_mainViewBgDarkColor];
         }];
         
         [self setupUI];
-        
-        [[NSNotificationCenter defaultCenter] addObserver:self
-                                                 selector:@selector(windowDidResize:)
-                                                     name:NSWindowDidResizeNotification
-                                                   object:self];
     }
     return self;
 }
@@ -131,6 +136,10 @@
     }
 }
 
+- (void)windowWillClose:(NSNotification *)notification {
+    [self.queryViewController cancelAutoQuery];
+}
+
 - (void)windowDidResignKey:(NSNotification *)notification {
     //    MMLogInfo(@"windowDidResignKey: %@", self);
     
@@ -139,7 +148,7 @@
 }
 
 - (void)windowDidResize:(NSNotification *)aNotification {
-    //    MMLog(@"windowDidResize: %@, windowType: %ld", @(self.frame), self.windowType);
+        MMLog(@"windowDidResize: %@, windowType: %ld", @(self.frame), self.windowType);
     
     [[EZLayoutManager shared] updateWindowFrame:self];
     

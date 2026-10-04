@@ -17,6 +17,7 @@ enum SettingTab: Int {
     case advanced
     case shortcut
     case privacy
+    case favorites
     case about
 }
 
@@ -35,6 +36,10 @@ struct SettingView: View {
                 .tabItem { Label("service", systemImage: "briefcase") }
                 .tag(SettingTab.service)
 
+            FavoritesTab()
+                .tabItem { Label("favorites.tab", systemImage: "star") }
+                .tag(SettingTab.favorites)
+
             DisabledAppTab()
                 .tabItem { Label("disabled_app_list", systemImage: "nosign") }
                 .tag(SettingTab.disabled)
@@ -46,6 +51,7 @@ struct SettingView: View {
             AdvancedTab()
                 .tabItem { Label("advanced", systemImage: "gearshape.2") }
                 .tag(SettingTab.advanced)
+
             PrivacyTab()
                 .tabItem { Label("privacy", systemImage: "hand.raised.square") }
                 .tag(SettingTab.privacy)
@@ -80,6 +86,8 @@ struct SettingView: View {
             340
         case .about:
             300
+        case .favorites:
+            640
         default:
             maxWidth * 0.8
         }
@@ -90,12 +98,15 @@ struct SettingView: View {
         let newY = originalFrame.origin.y + originalFrame.size.height - newSize.height
         let newRect = NSRect(origin: CGPoint(x: originalFrame.origin.x, y: newY), size: newSize)
 
-        window.setFrame(newRect, display: true, animate: true)
-
-        // Disable user to resize window, wait for the animation to finish.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            window.styleMask.remove(.resizable)
+        window.setFrame(newRect, display: true, animate: false)
+        // macOS 27: keep the sidebar below the title bar by removing the
+        // `.fullSizeContentView` style SwiftUI keeps after resize. Older macOS
+        // versions are unaffected.
+        // Refer: https://github.com/tisfeng/Easydict/pull/1258#issuecomment-5186918247
+        if #available(macOS 27.0, *) {
+            window.styleMask.remove(.fullSizeContentView)
         }
+        window.styleMask.remove(.resizable)
     }
 
     // MARK: Private

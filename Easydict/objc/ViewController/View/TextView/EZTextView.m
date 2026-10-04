@@ -7,6 +7,7 @@
 //
 
 #import "EZTextView.h"
+#import "NSObject+EZDarkMode.h"
 
 @interface EZTextView () <NSTextViewDelegate>
 
@@ -72,12 +73,9 @@
             //        | NSTextCheckingTypeRegularExpression
             | NSTextCheckingTypePhoneNumber | NSTextCheckingTypeTransitInformation;
 
-        [self excuteLight:^(EZTextView *textView) {
-            textView.backgroundColor = [NSColor ez_queryViewBgLightColor];
-            [textView setTextColor:[NSColor ez_queryTextLightColor]];
-        } dark:^(EZTextView *textView) {
-            textView.backgroundColor = [NSColor ez_queryViewBgDarkColor];
-            [textView setTextColor:[NSColor ez_queryTextDarkColor]];
+        [self executeOnAppearanceChange:^(EZTextView *textView, BOOL isDarkMode) {
+            textView.backgroundColor = isDarkMode ? [NSColor ez_queryViewBgDarkColor] : [NSColor ez_queryViewBgLightColor];
+            [textView setTextColor:isDarkMode ? [NSColor ez_queryTextDarkColor] : [NSColor ez_queryTextLightColor]];
         }];
         self.alignment = NSTextAlignmentLeft;
         self.textContainerInset = CGSizeMake(0, 0);
@@ -89,6 +87,10 @@
         //  [self setupPlaceHolderTextView];
     }
     return self;
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 // 重写粘贴方法，纯文本粘贴  https://stackoverflow.com/questions/8198767/how-can-you-intercept-pasting-into-a-nstextview-to-remove-unsupported-formatting
@@ -111,7 +113,7 @@
         NSPasteboardTypeRTFD
     ]];
     NSString *pasteboardString = [pasteboard stringForType:stringType];
-    pasteboardString = [pasteboardString trim];
+    pasteboardString = [pasteboardString ns_trim];
     
     // pasteboardString may be nil
     if (!pasteboardString) {
@@ -186,7 +188,7 @@
 - (void)updateTextAndParagraphStyle:(NSString *)text {
     self.string = text;
     
-    NSString *newText = [text removeExtraLineBreaks];
+    NSString *newText = [text ns_removeExtraLineBreaks];
     
     // If the text has extra Line Breaks, then we don't need to add paragraph spacing.
     BOOL hasExtraLineBreaks = ![newText isEqualToString:text];
@@ -214,10 +216,8 @@
     self.placeholderTextField.editable = NO;
     self.placeholderTextField.selectable = NO;
 
-    [self.placeholderTextField excuteLight:^(NSTextView *placeholderTextView) {
-        [placeholderTextView setBackgroundColor:[NSColor ez_queryViewBgLightColor]];
-    } dark:^(NSTextView *placeholderTextView) {
-        [placeholderTextView setBackgroundColor:[NSColor ez_queryViewBgDarkColor]];
+    [self.placeholderTextField executeOnAppearanceChange:^(NSTextField *placeholderTextField, BOOL isDarkMode) {
+        [placeholderTextField setBackgroundColor:isDarkMode ? [NSColor ez_queryViewBgDarkColor] : [NSColor ez_queryViewBgLightColor]];
     }];
 
     [self addSubview:self.placeholderTextField];

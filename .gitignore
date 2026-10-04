@@ -6,6 +6,7 @@
 
 ## User settings
 xcuserdata/
+Easydict-debug.local.xcconfig
 
 ## compatibility with Xcode 8 and earlier (ignoring not required starting Xcode 9)
 *.xcscmblueprint
@@ -83,4 +84,27 @@ node_modules/
 # Ref: https://github.com/github/gitignore/blob/4488915eec0b3a45b5c63ead28f286819c0917de/Global/macOS.gitignore
 .DS_Store
 
+# macOS Finder custom icon file (contains carriage return in filename, invalid on Windows)
+Icon?
+
 .sentryclirc
+
+# Python
+__pycache__/
+*.py[cod]
+
+# SwiftFormat 
+# https://github.com/nicklockwood/SwiftFormat?tab=readme-ov-file#xcode-build-phase
+BuildTools/.build
+BuildTools/.swiftpm
+
+.tmp/
+scripts/release/runs/
+
+# Ignore xcodeproj Package.resolved file, use xcworkspace Package.resolved instead (For CocoaPods
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+
+# Ignore *.zip, *.app and *.dmg files generated during build or release process
+*.zip
+*.app
+*.dmg

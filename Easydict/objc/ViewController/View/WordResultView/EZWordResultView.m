@@ -13,22 +13,22 @@
 #import "NSTextView+Height.h"
 #import "EZConst.h"
 #import "EZFixedQueryWindow.h"
-#import "NSString+MM.h"
 #import "EZLayoutManager.h"
 #import "EZWindowManager.h"
 #import "EZOpenLinkButton.h"
 #import "NSImage+EZResize.h"
-#import "EZQueryService.h"
 #import "EZBlueTextButton.h"
 #import "EZMyLabel.h"
 #import "EZAudioButton.h"
 #import "EZCopyButton.h"
 #import "NSImage+EZSymbolmage.h"
 #import "TTTDictionary.h"
-#import "EZServiceTypes.h"
+#import "EZEnumTypes.h"
 #import "EZReplaceTextButton.h"
 #import "EZWrapView.h"
-#import "Easydict-Swift.h"
+#import "NSObject+EZDarkMode.h"
+#import "EZWebViewManager.h"
+#import <math.h>
 
 static const CGFloat kHorizontalMargin_8 = 8;
 static const CGFloat kVerticalMargin_12 = 12;
@@ -36,6 +36,7 @@ static const CGFloat kVerticalPadding_6 = 6;
 static const CGFloat kBlueTextButtonVerticalPadding_2 = 2;
 
 static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
+static NSString *const kMDictEntryURIScheme = @"mdict-entry";
 
 @interface EZWordResultView () <NSTextViewDelegate>
 
@@ -46,18 +47,35 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
 
 @property (nonatomic, assign) CGFloat fontSizeRatio;
 
++ (void)applyTagButtonAppearance:(NSButton *)tagButton tagColor:(NSColor *)tagColor fontSize:(CGFloat)fontSize;
+- (void)fetchDictionaryHTMLTextIfNeeded;
+
 @end
 
 
 @implementation EZWordResultView
+
+/// Applies tag button styling without touching instance state.
+/// Using a class helper keeps the dark mode handlers from capturing `self`,
+/// which avoids a retain cycle through the tag button's observer store.
++ (void)applyTagButtonAppearance:(NSButton *)tagButton tagColor:(NSColor *)tagColor fontSize:(CGFloat)fontSize {
+    tagButton.wantsLayer = YES;
+    tagButton.layer.borderWidth = 1.2;
+    tagButton.layer.cornerRadius = 3;
+    tagButton.layer.borderColor = tagColor.CGColor;
+    tagButton.bordered = NO;
+
+    NSAttributedString *attributedString = [NSAttributedString mm_attributedStringWithString:tagButton.title font:[NSFont systemFontOfSize:fontSize] color:tagColor];
+    tagButton.attributedTitle = attributedString;
+}
 
 - (instancetype)initWithFrame:(NSRect)frame {
     self = [super initWithFrame:frame];
     if (self) {
         self.wantsLayer = YES;
         self.layer.cornerRadius = EZCornerRadius_8;
-        self.fontSizeRatio = Configuration.shared.fontSizeRatio;
-        [self.layer excuteLight:^(CALayer *layer) {
+        self.fontSizeRatio = MyConfiguration.shared.fontSizeRatio;
+        [self.layer executeLight:^(CALayer *layer) {
             layer.backgroundColor = [NSColor ez_resultViewBgLightColor].CGColor;
         } dark:^(CALayer *layer) {
             layer.backgroundColor = [NSColor ez_resultViewBgDarkColor].CGColor;
@@ -68,11 +86,21 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
 
 // TODO: This method is too long, need to refactor.
 - (void)refreshWithResult:(EZQueryResult *)result {
+    BOOL shouldRenderHTML = EZResultShouldRenderDictionaryHTML(result);
+    EZQueryResult *previousResult = self.result;
+    WKWebView *previousWebView = self.webView;
+    if (previousResult && (previousResult != result || !shouldRenderHTML)) {
+        if (previousWebView.navigationDelegate == self) {
+            previousWebView.navigationDelegate = nil;
+        }
+    }
+
     self.result = result;
-    self.fontSizeRatio = Configuration.shared.fontSizeRatio;
+    self.fontSizeRatio = MyConfiguration.shared.fontSizeRatio;
 
     EZTranslateWordResult *wordResult = result.wordResult;
-    self.webView = result.webViewManager.webView;
+    WKWebView *webView = shouldRenderHTML ? result.webViewManager.webView : nil;
+    self.webView = webView;
 
     [self.subviews makeObjectsPerformSelector:@selector(removeFromSuperview)];
 
@@ -86,27 +114,42 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
 
     mm_weakify(self);
 
-    if (result.HTMLString.length) {
-        [self addSubview:self.webView];
+    if (shouldRenderHTML) {
+        EZWebViewManager *webViewManager = result.webViewManager;
+        webView.navigationDelegate = self;
+        [self addSubview:webView];
 
-        if (result.webViewManager.isLoaded) {
-            [result.webViewManager updateAllIframe];
-        }
-
-        [result.webViewManager setDidFinishUpdatingIframeHeightBlock:^(CGFloat scrollHeight) {
+        __weak EZQueryResult *expectedResult = result;
+        __weak EZWebViewManager *expectedWebViewManager = webViewManager;
+        [webViewManager setDidFinishUpdatingIframeHeightBlock:^(CGFloat scrollHeight) {
             mm_strongify(self);
+            EZQueryResult *strongResult = expectedResult;
+            EZWebViewManager *strongWebViewManager = expectedWebViewManager;
+            if (!strongResult || !strongWebViewManager ||
+                self.result != strongResult ||
+                self.result.webViewManager != strongWebViewManager) {
+                return;
+            }
 
             [self updateWebViewHeight:scrollHeight];
         }];
 
-        [self.webView mas_makeConstraints:^(MASConstraintMaker *make) {
+        if (webViewManager.isLoaded && webViewManager.wordResultViewHeight <= 0) {
+            webViewManager.needUpdateIframeHeight = YES;
+        }
+
+        if (webViewManager.isLoaded && webViewManager.needUpdateIframeHeight) {
+            [webViewManager updateAllIframe];
+        }
+
+        [webView mas_makeConstraints:^(MASConstraintMaker *make) {
             CGFloat topOffset = 0;
             make.top.offset(topOffset);
             height += topOffset;
             make.left.right.inset(2);
         }];
 
-        lastView = self.webView;
+        lastView = webView;
     } else {
         BOOL isShortWordLength = result.queryText.length && [EZLanguageManager.shared isShortWordLength:result.queryText language:result.queryFromLanguage];
 
@@ -154,7 +197,15 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
             }
 
             if (text) {
-                EZLabel *resultLabel = [[EZLabel alloc] init];
+                EZLabel *resultLabel;
+                BOOL serviceIsStreaming = [self.service isStream];
+                if (serviceIsStreaming && errorMessage.length == 0) {
+                    EDMarkdownLabel *markdownLabel = [[EDMarkdownLabel alloc] init];
+                    markdownLabel.markdownEnabled = result.isMarkdownRenderingEnabled;
+                    resultLabel = markdownLabel;
+                } else {
+                    resultLabel = [[EZLabel alloc] init];
+                }
                 resultLabel.font = [NSFont systemFontOfSize:14 * self.fontSizeRatio];
                 [self addSubview:resultLabel];
 
@@ -290,7 +341,7 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
                 phoneticLabel.font = [NSFont systemFontOfSize:textFont.pointSize * self.fontSizeRatio];
 
                 // ???: WTF, why Baidu phonetic contain '\n', e.g. ceil "siːl\n"
-                phoneticLabel.text = [NSString stringWithFormat:@"/ %@ /", phonetic.trim];
+                phoneticLabel.text = [NSString stringWithFormat:@"/ %@ /", [phonetic  ns_trim]];
                 [phoneticLabel mas_makeConstraints:^(MASConstraintMaker *make) {
                     make.left.equalTo(phoneticTagLabel.mas_right).offset(kHorizontalMargin_8);
                     make.centerY.equalTo(phoneticTagLabel);
@@ -308,7 +359,7 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
             EZAudioPlayer *audioPlayer = [[EZAudioPlayer alloc] init];
             audioButton.audioPlayer = audioPlayer;
             [audioButton setPlayAudioBlock:^{
-                [audioPlayer playWordPhonetic:obj designatedService:result.service];
+                [audioPlayer playWordPhonetic:obj designatedService:self.service];
             }];
 
             [audioButton mas_makeConstraints:^(MASConstraintMaker *make) {
@@ -326,6 +377,7 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
             __block CGFloat tagContentViewWidth = 0;
             CGFloat padding = 6;
             CGFloat leftMargin = kHorizontalMargin_8 + 2;
+            CGFloat tagFontSize = 12 * self.fontSizeRatio;
 
             __block NSButton *lastTagButton = nil;
             [wordResult.tags enumerateObjectsUsingBlock:^(NSString *_Nonnull tag, NSUInteger idx, BOOL *_Nonnull stop) {
@@ -335,12 +387,9 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
 
                 NSButton *tagButton = [[NSButton alloc] init];
                 tagButton.title = tag;
-                [tagButton excuteLight:^(NSButton *tagButton) {
-                    NSColor *tagColor = [NSColor mm_colorWithHexString:@"#7A7A78"];
-                    [self updateTagButton:tagButton tagColor:tagColor];
-                } dark:^(NSButton *tagButton) {
-                    NSColor *tagColor = [NSColor mm_colorWithHexString:@"#CCCCC8"];
-                    [self updateTagButton:tagButton tagColor:tagColor];
+                [tagButton executeOnAppearanceChange:^(NSButton *tagButton, BOOL isDarkMode) {
+                    NSColor *tagColor = [NSColor mm_colorWithHexString:isDarkMode ? @"#CCCCC8" : @"#7A7A78"];
+                    [EZWordResultView applyTagButtonAppearance:tagButton tagColor:tagColor fontSize:tagFontSize];
                 }];
 
                 [tagButton sizeToFit];
@@ -367,7 +416,7 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
                     tagContentView = [[NSView alloc] init];
                     [tagScrollView addSubview:tagContentView];
                     tagContentView.wantsLayer = YES;
-                    [tagContentView.layer excuteLight:^(CALayer *layer) {
+                    [tagContentView.layer executeLight:^(CALayer *layer) {
                         layer.backgroundColor = [NSColor ez_resultViewBgLightColor].CGColor;
                     } dark:^(CALayer *layer) {
                         layer.backgroundColor = [NSColor ez_resultViewBgDarkColor].CGColor;
@@ -655,7 +704,7 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
             meanLabel.text = obj.meansText;
             meanLabel.font = [NSFont systemFontOfSize:14 * self.fontSizeRatio];
             [self addSubview:meanLabel];
-            [meanLabel excuteLight:^(id _Nonnull x) {
+            [meanLabel executeLight:^(id _Nonnull x) {
                 [x setTextColor:[NSColor ez_resultTextLightColor]];
             } dark:^(id _Nonnull x) {
                 [x setTextColor:[NSColor ez_resultTextDarkColor]];
@@ -765,7 +814,7 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
     BOOL hasTranslatedText = result.translatedText.length > 0;
     audioButton.enabled = hasTranslatedText;
 
-    audioButton.audioPlayer = self.result.service.audioPlayer;
+    audioButton.audioPlayer = self.service.audioPlayer;
 
     [audioButton setPlayStatus:^(BOOL isPlaying, EZAudioButton *audioButton) {
         NSString *action = isPlaying ? NSLocalizedString(@"stop_play_audio", nil) : NSLocalizedString(@"play_audio", nil);
@@ -776,41 +825,41 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
         NSString *text = result.copiedText;
 
         // For some special case, copied text language is not the queryTargetLanguage, like 龘, Youdao translate.
-        EZLanguage language = [EZAppleService.shared detectText:text];
+        EZLanguage language = [EZAppleService.shared detectTextSync:text];
         if ([result.serviceTypeWithUniqueIdentifier isEqualToString:EZServiceTypeOpenAI]) {
             language = result.to;
         }
 
-        EZServiceType defaultTTSServiceType = Configuration.shared.defaultTTSServiceType;
-        EZQueryService *defaultTTSService = [EZServiceTypes.shared serviceWithTypeId:defaultTTSServiceType];
+        EZServiceType defaultTTSServiceType = MyConfiguration.shared.defaultTTSServiceType;
+        EZQueryService *defaultTTSService = [QueryServiceFactory.shared serviceWithTypeId:defaultTTSServiceType];
 
         // Determine accent based on user preference if language is English
         NSString *accentToUse = nil;
         if ([language isEqualToString:EZLanguageEnglish]) {
             // Assuming EnglishPronunciationUk is accessible, similar to EZBaseQueryViewController
-            if (Configuration.shared.pronunciation == EnglishPronunciationUk) {
+            if (MyConfiguration.shared.pronunciation == EnglishPronunciationUk) {
                 accentToUse = @"uk";
             } else {
                 accentToUse = @"us";
             }
         }
 
-        [result.service.audioPlayer playTextAudio:text
-                                         language:language
-                                           accent:accentToUse // Use determined accent
-                                         audioURL:nil
-                                designatedService:defaultTTSService];
+        [self.service.audioPlayer playTextAudio:text
+                                       language:language
+                                         accent:accentToUse // Use determined accent
+                                       audioURL:nil
+                              designatedService:defaultTTSService];
     }];
 
     audioButton.mas_key = @"result_audioButton";
 
     EZCopyButton *textCopyButton = [[EZCopyButton alloc] init];
     [self addSubview:textCopyButton];
-    textCopyButton.enabled = hasTranslatedText | result.HTMLString.length;
+    textCopyButton.enabled = hasTranslatedText | result.htmlString.length;
 
     [textCopyButton setClickBlock:^(EZButton *_Nonnull button) {
         MMLogInfo(@"copyActionBlock");
-        [result.copiedText copyAndShowToast:YES];
+        [result.copiedText ns_copyAndShowToast:YES];
     }];
     textCopyButton.mas_key = @"result_copyButton";
 
@@ -854,9 +903,9 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
     }
     linkButton.toolTip = toolTip;
 
-    linkButton.link = [result.service wordLink:result.queryModel];
+    linkButton.link = [self.service wordLink:result.queryModel];
 
-    [linkButton excuteLight:^(NSButton *linkButton) {
+    [linkButton executeLight:^(NSButton *linkButton) {
         linkButton.image = [linkButton.image imageWithTintColor:[NSColor ez_imageTintLightColor]];
     } dark:^(NSButton *linkButton) {
         linkButton.image = [linkButton.image imageWithTintColor:[NSColor ez_imageTintDarkColor]];
@@ -889,12 +938,54 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
         make.width.height.bottom.equalTo(audioButton);
     }];
 
+    // Markdown rendering toggle, only on streaming (AI/LLM) services.
+    if ([self.service isStream]) {
+        EDMarkdownToggleButton *markdownToggleButton = [[EDMarkdownToggleButton alloc] init];
+        [self addSubview:markdownToggleButton];
+        markdownToggleButton.markdownEnabled = result.isMarkdownRenderingEnabled;
+        markdownToggleButton.enabled = hasTranslatedText;
+        markdownToggleButton.mas_key = @"result_markdownToggleButton";
+
+        mm_weakify(self);
+        markdownToggleButton.clickAction = ^{
+            mm_strongify(self);
+            [result toggleMarkdownRendering];
+
+            // Cross-fade the content swap so toggling Markdown does not flash.
+            self.wantsLayer = YES;
+            CATransition *fade = [CATransition animation];
+            fade.type = kCATransitionFade;
+            fade.duration = 0.2;
+            fade.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+            [self.layer addAnimation:fade forKey:@"EDMarkdownToggleFade"];
+
+            EZBaseQueryViewController *queryViewController =
+                EZWindowManager.shared.floatingWindow.queryViewController;
+            [queryViewController updateCellWithResult:result reloadData:YES];
+        };
+
+        [markdownToggleButton mas_makeConstraints:^(MASConstraintMaker *make) {
+            NSView *leftAnchor = result.showReplaceButton ? (NSView *)replaceTextButton : (NSView *)linkButton;
+            make.left.equalTo(leftAnchor.mas_right).offset(buttonPadding);
+            make.width.height.bottom.equalTo(audioButton);
+        }];
+    }
+
     // webView height need time to calculate, and the value will be called back later.
-    if (result.serviceTypeWithUniqueIdentifier == EZServiceTypeAppleDictionary) {
-        BOOL hasHTML = result.HTMLString.length > 0;
+    if (EZResultNeedsDictionaryHTMLHeight(result)) {
+        BOOL hasHTML = result.htmlString.length > 0;
         linkButton.enabled = hasHTML;
 
-        if (hasHTML) {
+        WKWebView *attachedWebView = self.webView;
+        if (hasHTML && attachedWebView && result.webViewManager.wordResultViewHeight > 0) {
+            CGFloat viewHeight = result.webViewManager.wordResultViewHeight;
+            CGFloat webViewHeight = MAX(viewHeight - self.bottomViewHeight, 0);
+            [attachedWebView mas_updateConstraints:^(MASConstraintMaker *make) {
+                make.height.mas_equalTo(webViewHeight);
+            }];
+            _viewHeight = viewHeight;
+            [self fetchDictionaryHTMLTextIfNeeded];
+        } else if (hasHTML) {
             _viewHeight = 0;
         }
     }
@@ -980,17 +1071,6 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
     return rtnView;
 }
 
-- (void)updateTagButton:(NSButton *)tagButton tagColor:(NSColor *)tagColor {
-    tagButton.wantsLayer = YES;
-    tagButton.layer.borderWidth = 1.2;
-    tagButton.layer.cornerRadius = 3;
-    tagButton.layer.borderColor = tagColor.CGColor;
-    tagButton.bordered = NO;
-
-    NSAttributedString *attributedString = [NSAttributedString mm_attributedStringWithString:tagButton.title font:[NSFont systemFontOfSize:12 * self.fontSizeRatio] color:tagColor];
-    tagButton.attributedTitle = attributedString;
-}
-
 - (CGSize)labelSize:(EZLabel *)label exceptedWidth:(CGFloat)exceptedWidth {
     // ???: 很奇怪，比如实际计算结果为 364，但界面渲染却是 364.5 😑
     CGFloat width = self.width - exceptedWidth;
@@ -1032,16 +1112,23 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
 - (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
     //    MMLog(@"webView didFinishNavigation");
 
-    [self.result.webViewManager updateAllIframe];
+    EZWebViewManager *webViewManager = self.result.webViewManager;
+    if (![webViewManager shouldHandleNavigation:navigation]) {
+        return;
+    }
+
+    [webViewManager updateAllIframe];
 }
 
 - (void)webView:(WKWebView *)webView didFailNavigation:(WKNavigation *)navigation withError:(NSError *)error {
     MMLogError(@"didFailNavigation: %@", error);
+    [self.result.webViewManager invalidateRenderingNavigation:navigation];
 }
 
 /** 请求服务器发生错误 (如果是goBack时，当前页面也会回调这个方法，原因是NSURLErrorCancelled取消加载) */
 - (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error {
     MMLogError(@"didFailProvisionalNavigation: %@", error);
+    [self.result.webViewManager invalidateRenderingNavigation:navigation];
 }
 
 // 监听 JavaScript 代码是否执行
@@ -1085,17 +1172,31 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
     if ([navigationActionURL.scheme isEqualToString:kAppleDictionaryURIScheme]) {
         MMLogInfo(@"Open URI: %@", navigationActionURL);
 
-        NSString *hrefText = [navigationActionURL.absoluteString decode];
+        NSString *hrefText = [navigationActionURL.absoluteString ns_decode];
 
         [self getTextWithHref:hrefText completionHandler:^(NSString *text) {
             MMLogInfo(@"URL text is: %@", text);
 
             if (self.queryTextBlock) {
-                self.queryTextBlock([text trim]);
+                self.queryTextBlock([text  ns_trim]);
             }
         }];
 
         //        [[NSWorkspace sharedWorkspace] openURL:navigationActionURL];
+
+        decisionHandler(WKNavigationActionPolicyCancel);
+        return;
+    }
+
+    if ([navigationActionURL.scheme isEqualToString:kMDictEntryURIScheme]) {
+        NSString *targetText = navigationActionURL.resourceSpecifier ?: @"";
+        if ([targetText hasPrefix:@"//"]) {
+            targetText = [targetText substringFromIndex:2];
+        }
+        targetText = [[targetText ns_decode] ns_trim];
+        if (self.queryTextBlock && targetText.length) {
+            self.queryTextBlock(targetText);
+        }
 
         decisionHandler(WKNavigationActionPolicyCancel);
         return;
@@ -1110,23 +1211,43 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
 #pragma mark -
 
 - (void)updateWebViewHeight:(CGFloat)scrollHeight {
+    WKWebView *webView = self.webView;
+
     // Cost ~0.15s
     //    NSString *script = @"document.documentElement.scrollHeight;";
 
     //    MMLog(@"scrollHeight: %.1f", scrollHeight);
 
-    CGFloat visibleFrameHeight = EZLayoutManager.shared.screen.visibleFrame.size.height;
+    EZBaseQueryWindow *queryWindow = [self.window isKindOfClass:[EZBaseQueryWindow class]]
+        ? (EZBaseQueryWindow *)self.window
+        : nil;
+    NSScreen *screen = queryWindow.screen ?: EZLayoutManager.shared.screen;
+    CGFloat visibleFrameHeight = screen.visibleFrame.size.height;
     CGFloat maxHeight = visibleFrameHeight * 0.55;
 
-    EZBaseQueryWindow *floatingWindow = EZWindowManager.shared.floatingWindow;
-    EZBaseQueryViewController *queryViewController = floatingWindow.queryViewController;
+    EZBaseQueryViewController *queryViewController = queryWindow.queryViewController;
     if (queryViewController.services.count == 1) {
-        maxHeight = visibleFrameHeight - floatingWindow.height - self.bottomViewHeight;
+        CGSize maximumWindowSize =
+            [EZLayoutManager.shared maximumWindowSize:queryViewController.windowType];
+        maxHeight = MAX(maxHeight,
+                        maximumWindowSize.height - self.bottomViewHeight);
     }
 
     // Fix strange white line
     CGFloat webViewHeight = ceil(MIN(maxHeight, scrollHeight));
     CGFloat viewHeight = self.bottomViewHeight + webViewHeight;
+    CGFloat previousViewHeight = self.result.webViewManager.wordResultViewHeight;
+    self.result.webViewManager.wordResultViewHeight = viewHeight;
+    _viewHeight = viewHeight;
+
+    if (previousViewHeight > 0 &&
+        fabs(viewHeight - previousViewHeight) < EZLayoutGeometryTolerance_0_5) {
+        return;
+    }
+
+    if (!queryViewController) {
+        return;
+    }
 
     /**
      Improve scrollable height:
@@ -1140,14 +1261,16 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
         [jsCode appendString:[self jsCodeOfOptimizeScrollableWebView]];
     }
 
-    if (jsCode.length) {
+    if (webView && jsCode.length) {
         [self evaluateJavaScript:jsCode];
     }
 
 
-    [self.webView mas_updateConstraints:^(MASConstraintMaker *make) {
-        make.height.mas_equalTo(webViewHeight);
-    }];
+    if (webView) {
+        [webView mas_updateConstraints:^(MASConstraintMaker *make) {
+            make.height.mas_equalTo(webViewHeight);
+        }];
+    }
 
 
     /**
@@ -1157,7 +1280,7 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
      take: 1971476
      */
 
-    //    CGFloat delayShowingTime = self.result.HTMLString.length / 1000000.0;
+    //    CGFloat delayShowingTime = self.result.htmlString.length / 1000000.0;
     //    MMLogInfo(@"Delay showing time: %.2f", delayShowingTime);
 
     // !!!: Must update view height, then update cell height.
@@ -1166,20 +1289,43 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
         self.updateViewHeightBlock(viewHeight);
     }
 
-
     // Notify tableView to update cell height.
     [queryViewController updateCellWithResult:self.result reloadData:NO];
 
+    [self fetchDictionaryHTMLTextIfNeeded];
+}
+
+- (void)fetchDictionaryHTMLTextIfNeeded {
+    // Extract iframe text only once; later height callbacks are layout-only.
+    if (!self.webView || self.result.copiedText.length > 0) {
+        return;
+    }
+
+    __weak WKWebView *expectedWebView = self.webView;
+    __weak EZQueryResult *expectedResult = self.result;
+    NSString *expectedHTML = [self.result.htmlString copy];
+    NSString *expectedQueryText = [self.result.queryText copy];
     [self fetchWebViewAllIframeText:^(NSString *text) {
-        self.result.copiedText = text;
-        self.result.translatedResults = @[ text ];
+        WKWebView *strongWebView = expectedWebView;
+        EZQueryResult *strongResult = expectedResult;
+        if (!strongWebView || !strongResult ||
+            self.webView != strongWebView ||
+            self.result != strongResult ||
+            ![strongResult.htmlString isEqualToString:expectedHTML] ||
+            ![strongResult.queryText isEqualToString:expectedQueryText] ||
+            ![strongResult.webViewManager.loadedHTMLString isEqualToString:expectedHTML]) {
+            return;
+        }
+
+        strongResult.copiedText = text;
+        strongResult.translatedResults = @[ text ];
 
         if (self.didFinishLoadingHTMLBlock) {
             self.didFinishLoadingHTMLBlock();
         }
 
-        if (self.result.didFinishLoadingHTMLBlock) {
-            self.result.didFinishLoadingHTMLBlock();
+        if (strongResult.didFinishLoadingHTMLBlock) {
+            strongResult.didFinishLoadingHTMLBlock();
         }
     }];
 }
@@ -1243,7 +1389,15 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
 }
 
 - (void)evaluateJavaScript:(NSString *)jsCode completionHandler:(void (^_Nullable)(_Nullable id, NSError *_Nullable error))completionHandler {
-    [self.webView evaluateJavaScript:jsCode completionHandler:^(id _Nullable result, NSError *_Nullable error) {
+    WKWebView *webView = self.webView;
+    if (!webView) {
+        if (completionHandler) {
+            completionHandler(nil, nil);
+        }
+        return;
+    }
+
+    [webView evaluateJavaScript:jsCode completionHandler:^(id _Nullable result, NSError *_Nullable error) {
         if (error) {
             MMLogError(@"error: %@", error);
             MMLogError(@"jsCode: %@", jsCode);
@@ -1259,10 +1413,14 @@ static NSString *const kAppleDictionaryURIScheme = @"x-dictionary";
     NSString *jsCode = @""
     "var iframes = document.querySelectorAll('iframe');"
     "var text = '';"
-    "for (var i = 0; i < iframes.length; i++) {"
-    "   text += iframes[i].contentDocument.body.innerText;"
-    "   text += '\\n\\n';"
-    "};"
+    "if (iframes.length === 0) {"
+    "   text = document.body.innerText;"
+    "} else {"
+    "   for (var i = 0; i < iframes.length; i++) {"
+    "      text += iframes[i].contentDocument.body.innerText;"
+    "      text += '\\n\\n';"
+    "   };"
+    "}"
     "text;";
 
     [self evaluateJavaScript:jsCode completionHandler:^(id _Nullable result, NSError *_Nullable error) {

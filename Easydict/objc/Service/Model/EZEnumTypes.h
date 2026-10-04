@@ -7,7 +7,8 @@
 //
 
 #import <Foundation/Foundation.h>
-#import "MMOrderedDictionary.h"
+
+@class MMOrderedDictionary;
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -26,8 +27,6 @@ typedef NS_ENUM(NSUInteger, EZShowWindowPosition) {
     EZShowWindowPositionFormer = 2,
     EZShowWindowPositionCenter = 3,
 };
-
-FOUNDATION_EXPORT NSString *const EZServiceTypeKey;
 
 typedef NSString *EZServiceType NS_STRING_ENUM NS_SWIFT_NAME(ServiceType);
 FOUNDATION_EXPORT EZServiceType const EZServiceTypeGoogle;
@@ -52,7 +51,13 @@ FOUNDATION_EXPORT EZServiceType const EZServiceTypeSummary;
 FOUNDATION_EXPORT EZServiceType const EZServiceTypeDeepSeek;
 FOUNDATION_EXPORT EZServiceType const EZServiceTypeGroq;
 FOUNDATION_EXPORT EZServiceType const EZServiceTypeZhipu;
+FOUNDATION_EXPORT EZServiceType const EZServiceTypeMiniMax;
 FOUNDATION_EXPORT EZServiceType const EZServiceTypeGitHub;
+FOUNDATION_EXPORT EZServiceType const EZServiceTypeDoubao;
+FOUNDATION_EXPORT EZServiceType const EZServiceTypeClaudeCode;
+FOUNDATION_EXPORT EZServiceType const EZServiceTypeClaude;
+FOUNDATION_EXPORT EZServiceType const EZServiceTypeCodexCLI;
+FOUNDATION_EXPORT EZServiceType const EZServiceTypeMDict;
 
 FOUNDATION_EXPORT NSString *const EZQueryTextTypeKey;
 FOUNDATION_EXPORT NSString *const EZIntelligentQueryTextTypeKey;
@@ -70,14 +75,6 @@ typedef NS_ENUM(NSUInteger, EZServiceUsageStatus) {
     EZServiceUsageStatusAlwaysOff = 1,
     EZServiceUsageStatusAlwaysOn = 2,
 };
-
-FOUNDATION_EXPORT NSString *const EZDeepLTranslationAPIKey;
-typedef NS_ENUM(NSUInteger, EZDeepLTranslationAPI) {
-    EZDeepLTranslationAPIWebFirst = 0,
-    EZDeepLTranslationAPIOfficialFirst = 1,
-    EZDeepLTranslationAPIOnlyOfficical = 2,
-};
-
 
 typedef NSString *EZActionType NS_STRING_ENUM NS_SWIFT_NAME(ActionType);
 FOUNDATION_EXPORT EZActionType const EZActionTypeNone;
@@ -107,6 +104,7 @@ typedef NS_OPTIONS(NSUInteger, EZTriggerType) {
     EZTriggerTypeTripleClick = 1 << 1,
     EZTriggerTypeDragged = 1 << 2,
     EZTriggerTypeShift = 1 << 3,
+    EZTriggerTypeSelectAllShortcut = 1 << 4, // Cmd+A in editable text contexts.
 };
 
 
@@ -116,9 +114,9 @@ typedef NS_OPTIONS(NSUInteger, EZTriggerType) {
 
 + (NSString *)windowName:(EZWindowType)type;
 
-+ (MMOrderedDictionary<NSNumber *, NSString *> *)fixedWindowPositionDict;
++ (MMOrderedDictionary *)fixedWindowPositionDict;
 
-+ (MMOrderedDictionary<NSNumber *, NSString *> *)translateWindowTypeDict;
++ (MMOrderedDictionary *)translateWindowTypeDict;
 
 @end
 
