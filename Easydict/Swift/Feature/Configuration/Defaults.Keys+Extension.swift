@@ -32,7 +32,15 @@ extension Defaults.Keys {
         default: EZLanguageManager.shared().systemPreferredTwoLanguages[1]
     )
 
-    static let autoSelectText = Key<Bool>("EZConfiguration_kAutoSelectTextKey", default: true)
+    static let autoShowQueryIcon = Key<Bool>("EZConfiguration_kAutoSelectTextKey", default: true)
+    static let autoShowQueryIconExcludedLanguage = Key<Language>(
+        "EZConfiguration_kAutoShowQueryIconExcludedLanguageKey",
+        default: Defaults[.firstLanguage]
+    )
+    static let autoShowQueryIconMinTextLength = Key<Int>(
+        "EZConfiguration_kAutoShowQueryIconMinTextLengthKey",
+        default: 0
+    )
     static let clickQuery = Key<Bool>("EZConfiguration_kClickQueryKey", default: false)
     static let autoPlayAudio = Key<Bool>("EZConfiguration_kAutoPlayAudioKey", default: false)
     static let pronunciation = Key<EnglishPronunciation>(
@@ -46,6 +54,9 @@ extension Defaults.Keys {
     )
     static let autoQueryPastedText = Key<Bool>(
         "EZConfiguration_kAutoQueryPastedTextKey", default: false
+    )
+    static let autoQueryWhenTextChanged = Key<Bool>(
+        "EZConfiguration_kAutoQueryWhenTextChangedKey", default: false
     )
     static let autoCopyOCRText = Key<Bool>("EZConfiguration_kAutoCopyOCRTextKey", default: false)
     static let autoCopySelectedText = Key<Bool>(
@@ -63,6 +74,13 @@ extension Defaults.Keys {
         "EZConfiguration_kDefaultTTSServiceTypeKey",
         default: TTSServiceType.youdao
     )
+    /// When enabled, English words are spoken via Youdao TTS regardless of the
+    /// configured default TTS service. Defaults to `true` to preserve the long
+    /// standing behavior of using Youdao's high quality dictionary recordings.
+    static let preferYoudaoTTSForEnglishWord = Key<Bool>(
+        "EZConfiguration_kPreferYoudaoTTSForEnglishWordKey",
+        default: true
+    )
     static let showGoogleQuickLink = Key<Bool>("EZConfiguration_kShowGoogleLinkKey", default: true)
     static let showEudicQuickLink = Key<Bool>("EZConfiguration_kShowEudicLinkKey", default: true)
     static let showAppleDictionaryQuickLink = Key<Bool>(
@@ -72,6 +90,7 @@ extension Defaults.Keys {
         "EZConfiguration_kShowSettingQuickLink", default: true
     )
     static let hideMenuBarIcon = Key<Bool>("EZConfiguration_kHideMenuBarIconKey", default: false)
+    static let includeBetaUpdates = Key<Bool>("EZConfiguration_kIncludeBetaUpdatesKey", default: false)
     static let fixedWindowPosition = Key<EZShowWindowPosition>(
         "EZConfiguration_kShowFixedWindowPositionKey",
         default: .right
@@ -92,9 +111,6 @@ extension Defaults.Keys {
         "EZConfiguration_kPinWindowWhenDisplayed", default: false
     )
 
-    static let adjustPopButtonOrigin = Key<Bool>(
-        "EZConfiguration_kAdjustPopButtomOriginKey", default: false
-    )
     static let allowCrashLog = Key<Bool>("EZConfiguration_kAllowCrashLogKey", default: true)
     static let allowAnalytics = Key<Bool>("EZConfiguration_kAllowAnalyticsKey", default: true)
 
@@ -110,7 +126,7 @@ extension Defaults.Keys {
         default: false
     )
 
-    static let appearanceType = Key<AppearenceType>(
+    static let appearanceType = Key<AppearanceType>(
         "EZConfiguration_kApperanceKey", default: .followSystem
     )
     static let fontSizeOptionIndex = Key<UInt>(
@@ -150,6 +166,10 @@ extension Defaults.Keys {
     static var showOCRMenuItems = Key<Bool>(
         "showOCRMenuItems", default: false
     )
+    /// Controls whether the screenshot tip layer is hidden during capture.
+    static var isScreenshotTipLayerHidden = Key<Bool>(
+        "isScreenshotTipLayerHidden", default: false
+    )
 
     static var minClassicalChineseTextDetectLength = Key<String>(
         "minClassicalChineseTextDetectLength",
@@ -165,6 +185,19 @@ extension Defaults.Keys {
         default: .menuBarActionCopy
     )
 
+    static let enableRemoveBooksExcerptInfo = Key<Bool>(
+        "EZConfiguration_kEnableRemoveBooksExcerptInfo",
+        default: true
+    )
+
+    /// Whether AI/streaming service results should render Markdown formatting
+    /// (headings, bold, lists, blockquotes, code) in the result label.
+    /// Plain-text services (Google, Bing, DeepL, etc.) ignore this setting.
+    static let enableMarkdownRendering = Key<Bool>(
+        "EZConfiguration_kEnableMarkdownRendering",
+        default: true
+    )
+
     static let autoSelectAllTextFieldText = Key<Bool>(
         "EZConfiguration_kAutoSelectAllTextFieldText",
         default: true
@@ -172,7 +205,7 @@ extension Defaults.Keys {
 
     static let preferAppleScriptAPI = Key<Bool>(
         "EZConfiguration_kPreferAppleScriptAPI",
-        default: false
+        default: true
     )
 
     /// Cannot use NSScreen, so we use CGRect to record the screen visible frame for EZShowWindowPositionFormer
@@ -190,6 +223,11 @@ extension Defaults.Keys {
     // Key for storing the selected max window height percentage, default is 100%.
     // Storing as Int (e.g., 50, 80, 100).
     static let maxWindowHeightPercentage = Key<Int>("maxWindowHeightPercentage", default: 100)
+
+    // MARK: - Favorites and History
+
+    static let favorites = Key<[QueryRecord]>("EZConfiguration_kFavorites", default: [])
+    static let queryHistory = Key<[QueryRecord]>("EZConfiguration_kQueryHistory", default: [])
 }
 
 extension Defaults.Keys {
@@ -301,6 +339,8 @@ class ShortcutWrapper<T: KeyCombo> {
     }
 }
 
+private let EZDeepLTranslationAPIKey = "EZDeepLTranslationAPIKey"
+
 // Service Configuration
 extension Defaults.Keys {
     // DeepL
@@ -341,12 +381,19 @@ extension Defaults.Keys {
     // Volcano
     static let volcanoAccessKeyID = Key<String>(EZVolcanoAccessKeyID, default: "")
     static let volcanoSecretAccessKey = Key<String>(EZVolcanoSecretAccessKey, default: "")
+
+    // Doubao
+    static let doubaoAPIKey = Key<String>(EZDoubaoAPIKey, default: "")
+    static let doubaoModel = Key<String>(EZDoubaoModelKey, default: DoubaoService.defaultModelIdentifier)
 }
 
 /// shortcut
 extension Defaults.Keys {
     // Global
     static let selectionShortcut = Key<KeyCombo?>("EZSelectionShortcutKey_keyHolder")
+    static let toggleAutoSelectTextShortcut = Key<KeyCombo?>(
+        "EZToggleAutoSelectTextShortcutKey_keyHolder"
+    )
     static let snipShortcut = Key<KeyCombo?>("EZSnipShortcutKey_keyHolder")
     static let inputShortcut = Key<KeyCombo?>("EZInputShortcutKey_keyHolder")
     // Note: This key value is not suitable for renaming, because it is used in old versions.

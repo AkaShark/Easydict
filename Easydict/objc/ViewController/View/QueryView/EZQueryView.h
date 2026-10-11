@@ -7,10 +7,11 @@
 //
 
 #import "EZTextView.h"
-#import "EZQueryModel.h"
 #import "EZLoadingAnimationView.h"
 #import "EZAudioButton.h"
 #import "NSObject+EZWindowType.h"
+
+@class EZQueryModel;
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -58,6 +59,9 @@ static NSTimeInterval const EZDelayDetectTextLanguageInterval = 1.0;
 - (void)removeAllLinks;
 
 - (void)scrollToEndOfTextView;
+
+/// Cancel the pending auto-query-while-typing debounce.
+- (void)cancelAutoQuery;
 
 @end
 

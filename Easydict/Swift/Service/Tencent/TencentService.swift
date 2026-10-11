@@ -9,6 +9,7 @@
 import Alamofire
 import Defaults
 import Foundation
+import SwiftUI
 
 @objc(EZTencentService)
 public final class TencentService: QueryService {
@@ -26,46 +27,53 @@ public final class TencentService: QueryService {
         NSLocalizedString("tencent_translate", comment: "The name of Tencent Translate")
     }
 
-    public override func supportLanguagesDictionary() -> MMOrderedDictionary<AnyObject, AnyObject> {
+    public override func supportLanguagesDictionary() -> MMOrderedDictionary {
         TencentTranslateType.supportLanguagesDictionary.toMMOrderedDictionary()
     }
 
-    public override func ocr(_: EZQueryModel) async throws -> EZOCRResult {
-        logInfo("Tencent Translate currently does not support OCR")
-        throw QueryServiceError.notSupported
-    }
-
-    public override func needPrivateAPIKey() -> Bool {
-        true
+    public override func apiKeyRequirement() -> ServiceAPIKeyRequirement {
+        .userProvided
     }
 
     public override func hasPrivateAPIKey() -> Bool {
-        if secretId == tencentSecretId, secretKey == tencentSecretKey {
-            return false
-        }
-        return true
+        !secretId.isEmpty && !secretKey.isEmpty
     }
 
     public override func totalFreeQueryCharacterCount() -> Int {
         500 * 10000
     }
 
+    /// Returns configuration items for the Tencent service settings view.
+    public override func configurationListItems() -> Any? {
+        ServiceConfigurationSecretSectionView(service: self, observeKeys: [.tencentSecretId, .tencentSecretKey]) {
+            SecureInputCell(
+                textFieldTitleKey: "service.configuration.tencent.secret_id.title",
+                key: .tencentSecretId
+            )
+            SecureInputCell(
+                textFieldTitleKey: "service.configuration.tencent.secret_key.title",
+                key: .tencentSecretKey
+            )
+        }
+    }
+
+    /// Translate text using the Tencent API.
     override public func translate(
         _ text: String,
         from: Language,
-        to: Language,
-        completion: @escaping (EZQueryResult, Error?) -> ()
-    ) {
+        to: Language
+    ) async throws
+        -> QueryResult {
         let transType = TencentTranslateType.transType(from: from, to: to)
         guard transType != .unsupported else {
             let showingFrom = EZLanguageManager.shared().showingLanguageName(from)
             let showingTo = EZLanguageManager.shared().showingLanguageName(to)
-            let error = QueryError(type: .unsupportedLanguage, message: "\(showingFrom) --> \(showingTo)")
-            completion(result, error)
-            return
+            throw QueryError(type: .unsupportedLanguage, message: "\(showingFrom) --> \(showingTo)")
         }
 
-        let parameters: [String: Any] = [
+        // Use `Parameters` type alias, not `[String: Any]`
+        // SeeAlso: https://github.com/Alamofire/Alamofire/issues/3983
+        let parameters: Parameters = [
             "SourceText": text,
             "Source": transType.sourceLanguage,
             "Target": transType.targetLanguage,
@@ -88,9 +96,10 @@ public final class TencentService: QueryService {
             secretKey: secretKey
         )
 
-        /// - BUG: Alamofire 5.10.0 will lead Tencent and Volcano API request fail.
-        /// - SeeAlso: https://github.com/tisfeng/Easydict/issues/975 and https://github.com/tisfeng/Easydict/issues/971
-        /// - Fix: Downgrade to Alamofire 5.9.1
+        let currentResult = result ?? QueryResult()
+        if result == nil {
+            result = currentResult
+        }
 
         let request = AF.request(
             endpoint,
@@ -99,57 +108,53 @@ public final class TencentService: QueryService {
             encoding: JSONEncoding.default,
             headers: headers
         )
-        .validate()
-        .responseDecodable(of: TencentResponse.self) { [weak self] response in
-            guard let self else { return }
-            let result = result
-
-            switch response.result {
-            case let .success(value):
-                result.translatedResults = value.Response.TargetText.components(separatedBy: "\n")
-                completion(result, nil)
-            case let .failure(error):
-                logError("Tencent lookup error \(error)")
-                let queryError = QueryError(type: .api, message: error.localizedDescription)
-
-                if let data = response.data {
-                    do {
-                        let errorResponse = try JSONDecoder().decode(
-                            TencentErrorResponse.self, from: data
-                        )
-                        queryError.errorDataMessage = errorResponse.response.error.message
-                    } catch {
-                        logError("Failed to decode error response: \(error)")
-                    }
-                }
-                completion(result, queryError)
-            }
-        }
 
         queryModel.setStop({
             request.cancel()
         }, serviceType: serviceType().rawValue)
+
+        let dataTask = request
+            .validate()
+            .serializingDecodable(TencentResponse.self)
+
+        do {
+            let value = try await dataTask.value
+            currentResult.translatedResults = value.Response.TargetText.components(separatedBy: "\n")
+            return currentResult
+        } catch {
+            logError("Tencent lookup error \(error)")
+
+            if let queryError = error as? QueryError {
+                throw queryError
+            }
+
+            let queryError = QueryError(type: .api, message: error.localizedDescription)
+            let response = await dataTask.response
+
+            if let data = response.data {
+                do {
+                    let errorResponse = try JSONDecoder().decode(
+                        TencentErrorResponse.self, from: data
+                    )
+                    queryError.errorDataMessage = errorResponse.response.error.message
+                } catch {
+                    logError("Failed to decode error response: \(error)")
+                }
+            }
+
+            throw queryError
+        }
     }
 
     // MARK: Private
 
     // easydict://writeKeyValue?EZTencentSecretId=xxx
     private var secretId: String {
-        let secretId = Defaults[.tencentSecretId]
-        if !secretId.isEmpty {
-            return secretId
-        } else {
-            return tencentSecretId
-        }
+        Defaults[.tencentSecretId]
     }
 
     // easydict://writeKeyValue?EZTencentSecretKey=xxx
     private var secretKey: String {
-        let secretKey = Defaults[.tencentSecretKey]
-        if !secretKey.isEmpty {
-            return secretKey
-        } else {
-            return tencentSecretKey
-        }
+        Defaults[.tencentSecretKey]
     }
 }
