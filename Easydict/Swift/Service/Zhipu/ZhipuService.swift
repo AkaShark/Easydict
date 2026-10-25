@@ -50,23 +50,30 @@ class ZhipuService: OpenAIService {
 // MARK: - ZhipuModel
 
 enum ZhipuModel: String, CaseIterable {
-    // zhipu free model https://docs.bigmodel.cn/cn/guide/start/model-overview
+    // zhipu model https://docs.bigmodel.cn/cn/guide/start/model-overview
+    // pricing: https://bigmodel.cn/pricing
+    // pricing snapshot date: 2026-02-20
+    // note: prices are a snapshot and may change over time.
+    // note: "TBD" means the model is not explicitly listed on the pricing snapshot page.
     // rate-limits: https://www.bigmodel.cn/usercenter/proj-mgmt/rate-limits
 
-    // GLM free models https://docs.bigmodel.cn/cn/guide/start/model-overview
-    case glm_4_5_flash = "glm-4.5-flash" // 128K context, 96K output, 2 QoS
-    case glm_4_flash_250414 = "glm-4-flash-250414" // 128K context, 16k output, 30 QoS
-    case glm_4_flash = "glm-4-flash" // glm-4-flash, 128K context, 4k output, 200 QoS
-    case glm_z1_flash = "glm-z1-flash" // 128K context, 32K output, 30 QoS
+    // Text models
+    case glm_5 = "glm-5" // Input CNY 4-6 / 1M tokens; output CNY 18-22 / 1M tokens (tiered).
+    case glm_4_7 = "glm-4.7" // Input CNY 2-4 / 1M tokens; output CNY 8-16 / 1M tokens (tiered).
+    case glm_4_7_flash = "glm-4.7-flash" // Free.
+    case glm_4_7_flashx = "glm-4.7-flashx" // Input CNY 0.5 / 1M tokens; output CNY 3 / 1M tokens.
+    case glm_4_6 = "glm-4.6" // TBD.
+    case glm_4_5_air = "glm-4.5-air" // Input CNY 0.8-1.2 / 1M tokens; output CNY 2-8 / 1M tokens (tiered).
+    case glm_4_5_airx = "glm-4.5-airx" // TBD.
+    case glm_4_5_flash = "glm-4.5-flash" // TBD.
+    case glm_4_flash_250414 = "glm-4-flash-250414" // Free.
+    case glm_4_flashx_250414 = "glm-4-flashx-250414" // CNY 0.1 / 1M tokens (single-rate listing).
 
-    // GLM 4.5 series
-    case glm_4_5 = "glm-4.5" // 128K context, 96K output, 20 QoS
-    case glm_4_5_x = "glm-4.5-x" // 128K context, 96K output, 1 QoS
-    case glm_4_5_air = "glm-4.5-air" // 128K context, 96K output, 30 QoS
-    case glm_4_5_airx = "glm-4.5-airx" // 128K context, 96K output, 5 QoS
-
-    // GLM Z1 series
-    case glm_z1_air = "glm-z1-air" // 128K context, 32K output, 30 QoS
-    case glm_z1_airx = "glm-z1-airx" // 32K context, 30K output, 30 QoS
-    case glm_z1_flashx = "glm-z1-flashx" // 128K context, 8K output, 50 QoS
+    // Multimodal models
+    case glm_4_6v = "glm-4.6v" // Input CNY 1-2 / 1M tokens; output CNY 3-6 / 1M tokens (tiered).
+    case glm_4_6v_flash = "glm-4.6v-flash" // Free.
+    case glm_4_6v_flashx = "glm-4.6v-flashx" // Input CNY 0.15-0.3 / 1M tokens; output CNY 1.5-3 / 1M tokens (tiered).
+    case glm_4v_flash = "glm-4v-flash" // Free.
+    case glm_4_1v_thinking_flashx = "glm-4.1v-thinking-flashx" // CNY 2 / 1M tokens (single-rate listing).
+    case glm_4_1v_thinking_flash = "glm-4.1v-thinking-flash" // Free.
 }

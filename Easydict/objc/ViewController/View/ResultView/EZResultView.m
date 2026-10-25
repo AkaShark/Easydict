@@ -10,8 +10,9 @@
 #import "EZHoverButton.h"
 #import "EZLoadingAnimationView.h"
 #import "NSImage+EZSymbolmage.h"
+#import "NSObject+EZDarkMode.h"
 #import "NSObject+EZWindowType.h"
-#import "Easydict-Swift.h"
+
 
 @interface EZResultView ()
 
@@ -40,7 +41,7 @@
 - (void)setup {
     self.wantsLayer = YES;
     self.layer.cornerRadius = EZCornerRadius_8;
-    [self.layer excuteLight:^(CALayer *layer) {
+    [self.layer executeLight:^(CALayer *layer) {
         layer.backgroundColor = [NSColor ez_resultViewBgLightColor].CGColor;
     } dark:^(CALayer *layer) {
         layer.backgroundColor = [NSColor ez_resultViewBgDarkColor].CGColor;
@@ -52,7 +53,7 @@
         mm_strongify(self);
         [self addSubview:view];
         view.wantsLayer = YES;
-        [view.layer excuteLight:^(CALayer *layer) {
+        [view.layer executeLight:^(CALayer *layer) {
             layer.backgroundColor = [NSColor ez_titleBarBgLightColor].CGColor;
         } dark:^(CALayer *layer) {
             layer.backgroundColor = [NSColor ez_titleBarBgDarkColor].CGColor;
@@ -81,7 +82,7 @@
         label.maximumNumberOfLines = 1;
         label.lineBreakMode = NSLineBreakByClipping;
         
-        [label excuteLight:^(NSTextField *label) {
+        [label executeLight:^(NSTextField *label) {
             label.textColor = [NSColor ez_resultTextLightColor];
         } dark:^(NSTextField *label) {
             label.textColor = [NSColor ez_resultTextDarkColor];
@@ -96,7 +97,7 @@
     self.serviceModelButton.titleFont = [NSFont systemFontOfSize:10];
     self.serviceModelButton.lineBreakMode = NSLineBreakByClipping;
 
-    [self.serviceModelButton excuteLight:^(EZButton *button) {
+    [self.serviceModelButton executeLight:^(EZButton *button) {
         button.titleColor = [NSColor mm_colorWithHexString:@"#666666"];
         button.backgroundColor = [NSColor mm_colorWithHexString:@"#E2E2E2"];
         button.backgroundHoverColor = [NSColor mm_colorWithHexString:@"#D2D2D2"];
@@ -134,9 +135,11 @@
     EZHoverButton *arrowButton = [[EZHoverButton alloc] init];
     self.arrowButton = arrowButton;
     [self addSubview:arrowButton];
-    NSImage *image = [NSImage imageNamed:@"arrow-down"];
-    arrowButton.image = image;
     self.arrowButton.mas_key = @"arrowButton";
+
+    [self executeOnAppearanceChange:^(EZResultView *view, BOOL isDarkMode) {
+        [view updateArrowButtonImage];
+    }];
 
     // Add `handleTopBarTap:` action to arrowButton
     arrowButton.target = self;
@@ -161,17 +164,15 @@
     EZHoverButton *retryButton = [[EZHoverButton alloc] init];
     self.retryButton = retryButton;
     [self addSubview:retryButton];
-    NSImage *retryImage = [NSImage ez_imageWithSymbolName:@"arrow.clockwise.circle"];
-    retryButton.image = retryImage;
     retryButton.mas_key = @"retryButton";
     retryButton.hidden = YES;
-    [retryButton excuteLight:^(NSButton *button) {
-        button.image = [button.image imageWithTintColor:[NSColor ez_imageTintLightColor]];
-    } dark:^(NSButton *button) {
-        button.image = [button.image imageWithTintColor:[NSColor ez_imageTintDarkColor]];
+
+    [self executeOnAppearanceChange:^(EZResultView *view, BOOL isDarkMode) {
+        [view updateRetryButtonImage];
     }];
     
     [retryButton setClickBlock:^(EZButton *button) {
+        mm_strongify(self);
         if (self.retryBlock) {
             self.retryBlock(self.result);
         }
@@ -268,16 +269,18 @@
 - (void)setResult:(EZQueryResult *)result {
     _result = result;
     
-    EZServiceType serviceType = result.service.serviceType;
-    self.serviceIcon.image = [NSImage imageNamed:serviceType];
+    EZQueryService *service = self.service;
+    NSString *iconName = service.iconName ?: result.serviceTypeWithUniqueIdentifier;
+    self.serviceIcon.image = [NSImage imageNamed:iconName];
     
-    self.serviceNameLabel.attributedStringValue = [NSAttributedString mm_attributedStringWithString:result.service.name font:[NSFont systemFontOfSize:13]];
+    NSString *serviceName = service.name ?: result.serviceTypeWithUniqueIdentifier;
+    self.serviceNameLabel.attributedStringValue = [NSAttributedString mm_attributedStringWithString:serviceName font:[NSFont systemFontOfSize:13]];
     
     mm_weakify(self);
     
-    if ([self isLLLStreamService:result.service]) {
-        EZStreamService *service = (EZStreamService *)result.service;
-        NSString *model = service.model;
+    if ([self isLLLStreamService:service]) {
+        EZStreamService *streamService = (EZStreamService *)service;
+        NSString *model = streamService.model;
         self.serviceModelButton.title = model;
         // hoverTitle may be different from normalTitle, fix https://github.com/tisfeng/Easydict/pull/516#issuecomment-2064164503
         self.serviceModelButton.hoverTitle = model;
@@ -288,8 +291,15 @@
             mm_strongify(self);
             [self showModelSelectionMenu:button];
         }];
+    } else {
+        self.serviceModelButton.title = @"";
+        self.serviceModelButton.hoverTitle = @"";
+        self.serviceModelButton.highlightTitle = @"";
+        self.serviceModelButton.toolTip = nil;
+        self.serviceModelButton.clickBlock = nil;
     }
     
+    self.wordResultView.service = service;
     [self.wordResultView refreshWithResult:result];
     
     [self.wordResultView setUpdateViewHeightBlock:^(CGFloat wordResultViewHeight) {
@@ -323,7 +333,7 @@
     }];
     
     CGFloat modelButtonWidth = 0;
-    if ([self isLLLStreamService:self.result.service]) {
+    if ([self isLLLStreamService:self.service]) {
         [self.serviceModelButton sizeToFit];
         // 120 is fit for model name `llama-3.1-70b-versatile`
         modelButtonWidth = MIN(self.serviceModelButton.width, 120 * [self windowWidthRatio]);
@@ -360,7 +370,7 @@
 #pragma mark - Update UI
 
 - (void)updateWordResultViewHeight:(CGFloat)wordResultViewHeight {
-    if (self.result.HTMLString.length) {
+    if (self.result.htmlString.length) {
         self.result.webViewManager.wordResultViewHeight = wordResultViewHeight;
         
         if (wordResultViewHeight) {
@@ -398,7 +408,7 @@
     BOOL warningType = (
         type == EZQueryErrorTypeUnsupportedLanguage ||
         type == EZQueryErrorTypeUnsupportedQueryType ||
-        (type == EZQueryErrorTypeNoResult && !self.result.service.isStream)
+        (type == EZQueryErrorTypeNoResult && !self.service.isStream)
     );
 
     BOOL showWarningImage = !self.result.hasTranslatedResult && warningType;
@@ -422,7 +432,7 @@
 - (void)updateStopButton {
     BOOL showStopButton = NO;
     
-    if (self.result.service.isStream) {
+    if (self.service.isStream) {
         showStopButton = self.result.hasTranslatedResult && !self.result.isStreamFinished;
     }
     
@@ -431,18 +441,8 @@
 }
 
 - (void)updateArrowButton {
-    NSImage *arrowImage = [NSImage imageNamed:@"arrow-left"];
-    if (self.result.isShowing) {
-        arrowImage = [NSImage imageNamed:@"arrow-down"];
-    }
-    
     self.arrowButton.toolTip = self.result.isShowing ? NSLocalizedString(@"hide", nil) : NSLocalizedString(@"show", nil);
-    
-    [self.arrowButton excuteLight:^(NSButton *button) {
-        button.image = [arrowImage imageWithTintColor:[NSColor ez_imageTintLightColor]];
-    } dark:^(NSButton *button) {
-        button.image = [arrowImage imageWithTintColor:[NSColor ez_imageTintDarkColor]];
-    }];
+    [self updateArrowButtonImage];
 }
 
 - (BOOL)isLLLStreamService:(EZQueryService *)service {
@@ -450,7 +450,11 @@
 }
 
 - (void)showModelSelectionMenu:(EZButton *)sender {
-    EZStreamService *service = (EZStreamService *)self.result.service;
+    EZStreamService *service = (EZStreamService *)self.service;
+    if (![self isLLLStreamService:service]) {
+        return;
+    }
+
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Menu"];
     for (NSString *model in service.validModels) {
         NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:model action:@selector(modelDidSelected:) keyEquivalent:@""];
@@ -461,7 +465,11 @@
 }
 
 - (void)modelDidSelected:(NSMenuItem *)sender {
-    EZStreamService *service = (EZStreamService *)self.result.service;
+    EZStreamService *service = (EZStreamService *)self.service;
+    if (![self isLLLStreamService:service]) {
+        return;
+    }
+
     if (![service.model isEqualToString:sender.title]) {
         service.model = sender.title;
         self.serviceModelButton.title = service.model;
@@ -537,6 +545,18 @@
     group.duration = 1;
     group.repeatCount = MAXFLOAT;
     [view.layer addAnimation:group forKey:@"group"];
+}
+
+- (void)updateArrowButtonImage {
+    NSImage *baseImage = self.result.isShowing ? [NSImage imageNamed:@"arrow-down"] : [NSImage imageNamed:@"arrow-left"];
+    NSColor *tintColor = self.arrowButton.isDarkMode ? [NSColor ez_imageTintDarkColor] : [NSColor ez_imageTintLightColor];
+    self.arrowButton.image = [baseImage imageWithTintColor:tintColor];
+}
+
+- (void)updateRetryButtonImage {
+    NSImage *baseImage = [NSImage ez_imageWithSymbolName:@"arrow.clockwise.circle"];
+    NSColor *tintColor = self.retryButton.isDarkMode ? [NSColor ez_imageTintDarkColor] : [NSColor ez_imageTintLightColor];
+    self.retryButton.image = [baseImage imageWithTintColor:tintColor];
 }
 
 @end
