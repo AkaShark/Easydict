@@ -21,8 +21,7 @@ extension StreamService {
         }
 
         // Since it is more difficult to accurately remove redundant quotes in streaming, we wait until the end of the request to remove the quotes
-        let nsText = resultText as NSString
-        resultText = nsText.tryToRemoveQuotes().trim()
+        resultText = resultText.tryToRemoveQuotes().trim()
 
         return resultText
     }
@@ -32,25 +31,63 @@ extension StreamService {
         _ textStream: AsyncThrowingStream<String, Error>,
         queryType: EZQueryTextType,
         error: Error?,
+        targetResult: QueryResult? = nil,
+        targetGeneration: UInt? = nil,
         interval: TimeInterval = 0.3,
-        completion: @escaping (EZQueryResult) -> ()
+        completion: @escaping (QueryResult) -> ()
     ) async throws {
         for try await text in textStream._throttle(for: .seconds(interval)) {
-            updateResultText(text, queryType: queryType, error: error, completion: completion)
+            updateResultText(
+                text,
+                queryType: queryType,
+                error: error,
+                targetResult: targetResult,
+                targetGeneration: targetGeneration,
+                completion: completion
+            )
         }
     }
 
+    /// Update the result text and optionally mark the stream as finished in one atomic operation.
+    ///
+    /// - Parameter markStreamFinished: When `true`, sets `result.isStreamFinished = true` inside
+    ///   the lock before updating `translatedResults`. This prevents a race where a throttled
+    ///   delivery of an earlier accumulated snapshot overwrites the final value after
+    ///   `isStreamFinished` has been set outside the lock.
     func updateResultText(
         _ resultText: String?,
         queryType: EZQueryTextType,
         error: Error?,
-        completion: @escaping (EZQueryResult) -> ()
+        markStreamFinished: Bool = false,
+        targetResult: QueryResult? = nil,
+        targetGeneration: UInt? = nil,
+        completion: @escaping (QueryResult) -> ()
     ) {
         // Acquire the lock before accessing/modifying the shared 'result' state
         updateResultLock.lock()
         defer { updateResultLock.unlock() }
 
-        if result.isStreamFinished {
+        // Stream chunks can arrive after the service has been reset for a new
+        // query. Generation guards prevent old chunks from updating the new UI.
+        if let targetGeneration, targetGeneration != resultGeneration {
+            return
+        }
+
+        let resultToUpdate: QueryResult
+        if let targetResult {
+            guard let currentResult = result, currentResult === targetResult else {
+                return
+            }
+            resultToUpdate = targetResult
+        } else {
+            let currentResult = result ?? QueryResult()
+            if result == nil {
+                result = currentResult
+            }
+            resultToUpdate = currentResult
+        }
+
+        if resultToUpdate.isStreamFinished {
             cancelStream()
 
             var queryError: QueryError?
@@ -59,20 +96,23 @@ extension StreamService {
                 let nsError = error as NSError
                 if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled {
                     // Do not throw error if user cancelled request.
+                } else if shouldIgnoreCompletionError(error, resultText: resultText) {
+                    logInfo("Ignore stream completion error with existing content: \(error)")
                 } else {
-                    queryError = .queryError(from: error)
+                    queryError = classifiedQueryError(from: error)
                 }
             } else if resultText?.isEmpty ?? true {
                 // If error is nil but result text is also empty, we should report error.
                 queryError = .init(type: .noResult)
             }
 
-            completeWithResult(result, error: queryError)
+            completeWithResult(resultToUpdate, error: queryError)
             return
         }
 
-        // If error is not nil, means stream is finished.
-        result.isStreamFinished = error != nil
+        // Mark the stream as finished atomically inside the lock so that concurrent
+        // throttle deliveries of stale snapshots cannot overwrite the final value.
+        resultToUpdate.isStreamFinished = markStreamFinished || (error != nil)
 
         var finalText = resultText?.trim() ?? ""
 
@@ -80,33 +120,154 @@ extension StreamService {
             finalText = finalText.filterThinkTagContent().trim()
         }
 
-        let updateCompletion = { [weak result] in
-            guard let result else { return }
+        // When this call is the one that marks the stream as finished (markStreamFinished: true),
+        // apply the same empty-result check that the already-finished guard (above) applies.
+        // Without this, a stream that completes with no output and no error would surface as
+        // success with translatedResults = [""] instead of a .noResult failure.
+        var completionError: Error? = error
+        if markStreamFinished, finalText.isEmpty, error == nil {
+            completionError = QueryError(type: .noResult)
+        }
 
-            result.translatedResults = [finalText]
-            completeWithResult(result, error: error)
+        let updateCompletion = {
+            resultToUpdate.translatedResults = [finalText]
+            completeWithResult(resultToUpdate, error: completionError)
         }
 
         switch queryType {
         case .dictionary:
             if error != nil {
-                result.showBigWord = false
-                result.translateResultsTopInset = 0
+                resultToUpdate.showBigWord = false
+                resultToUpdate.translateResultsTopInset = 0
                 updateCompletion()
                 return
             }
 
-            result.showBigWord = true
-            result.translateResultsTopInset = 6
+            resultToUpdate.showBigWord = true
+            resultToUpdate.translateResultsTopInset = 6
             updateCompletion()
 
         default:
             updateCompletion()
         }
 
-        func completeWithResult(_ result: EZQueryResult, error: Error?) {
+        func completeWithResult(_ result: QueryResult, error: Error?) {
             result.error = .queryError(from: error)
             completion(result)
         }
+    }
+
+    private func shouldIgnoreCompletionError(_ error: Error, resultText: String?) -> Bool {
+        guard let resultText else {
+            return false
+        }
+
+        let trimmedText = resultText.trim()
+        guard !trimmedText.isEmpty else {
+            return false
+        }
+
+        let contentLength = trimmedText.count
+        let minContentLengthToSuppressError = 8
+        guard contentLength >= minContentLengthToSuppressError else {
+            logInfo(
+                "Do not ignore stream completion error due to insufficient content. " +
+                    "Content length: \(contentLength), error: \(error)"
+            )
+            return false
+        }
+
+        // This error can be wrapped by different layers, so we collect a compact context string
+        // from the error itself, NSError metadata, and nested underlying errors.
+        let lowercasedErrorContext = errorContextString(error).lowercased()
+
+        let isContentTypeError = isContentTypeMismatchContext(lowercasedErrorContext)
+        let isKnownMIME = lowercasedErrorContext.contains("text/plain")
+            || lowercasedErrorContext.contains("application/json")
+        let shouldSuppress = isContentTypeError && isKnownMIME
+
+        if shouldSuppress {
+            logInfo(
+                "Ignore stream completion error with existing content due to content-type mismatch. " +
+                    "Content length: \(contentLength), error: \(error)"
+            )
+        }
+
+        return shouldSuppress
+    }
+
+    /// Build a user-friendly QueryError by classifying the Content-Type of the response.
+    private func classifiedQueryError(from error: Error) -> QueryError {
+        let context = errorContextString(error).lowercased()
+
+        if isContentTypeMismatchContext(context) {
+            if context.contains("text/html") {
+                return QueryError(
+                    type: .contentTypeMismatch,
+                    message: String(localized: "error.content_type.html"),
+                    errorDataMessage: String(localized: "error.content_type.html.suggestion")
+                )
+            }
+            if context.contains("application/json") {
+                return QueryError(
+                    type: .contentTypeMismatch,
+                    message: String(localized: "error.content_type.json"),
+                    errorDataMessage: String(localized: "error.content_type.json.suggestion")
+                )
+            }
+            return QueryError(
+                type: .contentTypeMismatch,
+                message: String(localized: "error.content_type.unknown"),
+                errorDataMessage: String(localized: "error.content_type.unknown.suggestion")
+            )
+        }
+
+        // queryError(from:) returns non-nil for a non-nil error; the fallback is defensive only.
+        return QueryError.queryError(from: error) ?? QueryError(type: .api)
+    }
+
+    /// Shared check for Content-Type mismatch patterns across error detection paths.
+    private func isContentTypeMismatchContext(_ context: String) -> Bool {
+        context.contains("incorrectcontenttype(")
+            || context.contains("incorrect content-type:")
+            || context.contains("unacceptable content-type:")
+    }
+
+    private func errorContextString(_ error: Error) -> String {
+        var parts = Set<String>()
+
+        func collect(_ currentError: Error, depth: Int) {
+            guard depth <= 2 else {
+                return
+            }
+
+            let nsError = currentError as NSError
+            parts.insert(String(describing: currentError))
+            parts.insert(nsError.localizedDescription)
+
+            if let failureReason = nsError.localizedFailureReason {
+                parts.insert(failureReason)
+            }
+
+            if let recoverySuggestion = nsError.localizedRecoverySuggestion {
+                parts.insert(recoverySuggestion)
+            }
+
+            if let debugDescription = nsError.userInfo[NSDebugDescriptionErrorKey] as? String {
+                parts.insert(debugDescription)
+            }
+
+            if let responseData = nsError.userInfo["com.alamofire.serialization.response.error.data"] as? Data,
+               let responseText = String(data: responseData, encoding: .utf8) {
+                parts.insert(responseText)
+            }
+
+            if let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+                collect(underlyingError, depth: depth + 1)
+            }
+        }
+
+        collect(error, depth: 0)
+        return parts.joined(separator: " | ")
     }
 }

@@ -6,6 +6,7 @@
 //  Copyright © 2025 izual. All rights reserved.
 //
 
+import AppKit
 import Foundation
 import Vision
 
@@ -242,7 +243,7 @@ class OCRLineMeasurer {
 
         let averageCharWidth = computeAverageCharWidth(
             currentObservation: observation,
-            anotherObservation: referenceObservation,
+            anotherObservation: referenceObservation
         )
 
         // Convert logical distance to character count using average character width

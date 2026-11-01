@@ -7,8 +7,10 @@
 //
 
 #import <Cocoa/Cocoa.h>
-#import "EZQueryResult.h"
 #import "EZWordResultView.h"
+
+@class EZQueryResult;
+@class EZQueryService;
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -18,6 +20,7 @@ static const CGFloat EZResultViewMiniHeight = 30;
 @interface EZResultView : NSView
 
 @property (nonatomic, strong) EZQueryResult *result;
+@property (nonatomic, strong) EZQueryService *service;
 
 @property (nonatomic, strong) EZWordResultView *wordResultView;
 

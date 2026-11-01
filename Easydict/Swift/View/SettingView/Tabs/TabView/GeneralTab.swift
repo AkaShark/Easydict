@@ -8,6 +8,7 @@
 
 import Defaults
 import LaunchAtLogin
+import SFSafeSymbols
 import SwiftUI
 
 // MARK: - GeneralTab
@@ -34,7 +35,7 @@ struct GeneralTab: View {
 
         // MARK: Private
 
-        private let updater = Configuration.shared.updater
+        private let updater = MyConfiguration.shared.updater
     }
 
     @Environment(\.colorScheme) var colorScheme
@@ -70,9 +71,10 @@ struct GeneralTab: View {
             }
 
             Section {
-                Toggle("auto_query_ocr_text", isOn: $autoQueryOCRText)
                 Toggle("auto_query_selected_text", isOn: $autoQuerySelectedText)
+                Toggle("auto_query_ocr_text", isOn: $autoQueryOCRText)
                 Toggle("auto_query_pasted_text", isOn: $autoQueryPastedText)
+                Toggle("auto_query_when_text_changed", isOn: $autoQueryWhenTextChanged)
                 Toggle("setting.general.voice.auto_play_word_audio", isOn: $autoPlayAudio)
                 Picker(
                     "setting.general.voice.english_pronunciation",
@@ -88,8 +90,8 @@ struct GeneralTab: View {
             }
 
             Section {
-                Toggle("auto_copy_ocr_text", isOn: $autoCopyOCRText)
                 Toggle("auto_copy_selected_text", isOn: $autoCopySelectedText)
+                Toggle("auto_copy_ocr_text", isOn: $autoCopyOCRText)
                 Toggle("auto_copy_first_translated_text", isOn: $autoCopyFirstTranslatedText)
             } header: {
                 Text("setting.general.auto_copy.header")
@@ -105,6 +107,20 @@ struct GeneralTab: View {
             }
 
             Section {
+                Toggle(isOn: $enableMarkdownRendering) {
+                    Label(
+                        "setting.general.display.enable_markdown_rendering",
+                        systemSymbol: .docRichtext
+                    )
+                }
+            } header: {
+                Text("setting.general.display.header")
+            } footer: {
+                Text("setting.general.display.enable_markdown_rendering.description")
+                    .font(.footnote)
+            }
+
+            Section {
                 Picker("setting.general.language", selection: $languageState.language) {
                     ForEach(LanguageState.LanguageType.allCases, id: \.rawValue) { language in
                         Text(language.name)
@@ -114,7 +130,7 @@ struct GeneralTab: View {
                 Picker(
                     "setting.general.appearance.light_dark_appearance", selection: $appearanceType
                 ) {
-                    ForEach(AppearenceType.allCases, id: \.rawValue) { option in
+                    ForEach(AppearanceType.allCases, id: \.rawValue) { option in
                         Text(option.title)
                             .tag(option)
                     }
@@ -130,12 +146,33 @@ struct GeneralTab: View {
                     }
                     Spacer()
                     Button("check_now") {
-                        Configuration.shared.updater.checkForUpdates()
+                        MyConfiguration.shared.updater.checkForUpdates()
                     }
                 }
 
                 Toggle(isOn: $checkUpdaterViewModel.autoChecksForUpdates) {
                     Text("auto_check_update ")
+                }
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("setting.general.startup_and_update.include_beta")
+                        Text("setting.general.startup_and_update.include_beta.description")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Toggle(
+                        isOn: $includeBetaUpdates.didSet(execute: { state in
+                            logSettings(["include_beta_updates": state])
+                            if state {
+                                MyConfiguration.shared.updater.checkForUpdates()
+                            }
+                        })
+                    ) {
+                        EmptyView()
+                    }
+                    .labelsHidden()
                 }
 
                 LaunchAtLogin.Toggle {
@@ -165,9 +202,13 @@ struct GeneralTab: View {
                     selection: $selectedMenuBarIcon
                 ) {
                     ForEach(MenuBarIconType.allCases) { option in
-                        Image(option.rawValue)
-                            .renderingMode(.template)
-                            .foregroundStyle(.primary)
+                        Label {
+                            EmptyView()
+                        } icon: {
+                            Image(option.rawValue)
+                                .renderingMode(.template)
+                        }
+                        .labelStyle(.iconOnly)
                     }
                 }
 
@@ -227,6 +268,15 @@ struct GeneralTab: View {
 
     // MARK: Private
 
+    // App setting
+    @EnvironmentObject private var languageState: LanguageState
+    @State private var showRefuseAlert = false
+    @State private var showHideMenuBarIconAlert = false
+
+    @StateObject private var checkUpdaterViewModel = CheckUpdaterViewModel()
+
+    @State private var lastestVersion: String?
+
     // Query language
     @Default(.languageDetectOptimize) private var languageDetectOptimize
 
@@ -239,6 +289,7 @@ struct GeneralTab: View {
     @Default(.autoQueryOCRText) private var autoQueryOCRText
     @Default(.autoQuerySelectedText) private var autoQuerySelectedText
     @Default(.autoQueryPastedText) private var autoQueryPastedText
+    @Default(.autoQueryWhenTextChanged) private var autoQueryWhenTextChanged
     @Default(.autoPlayAudio) private var autoPlayAudio
     @Default(.pronunciation) private var pronunciation
 
@@ -253,19 +304,13 @@ struct GeneralTab: View {
     @Default(.showAppleDictionaryQuickLink) private var showAppleDictionaryQuickLink
     @Default(.showQuickActionButton) private var showQuickActionButton
 
-    // App setting
-    @EnvironmentObject private var languageState: LanguageState
     @Default(.appearanceType) private var appearanceType
     @Default(.hideMenuBarIcon) private var hideMenuBarIcon
     @Default(.selectedMenuBarIcon) private var selectedMenuBarIcon
     @Default(.fontSizeOptionIndex) private var fontSizeOptionIndex
+    @Default(.enableMarkdownRendering) private var enableMarkdownRendering
 
-    @State private var showRefuseAlert = false
-    @State private var showHideMenuBarIconAlert = false
-
-    @StateObject private var checkUpdaterViewModel = CheckUpdaterViewModel()
-
-    @State private var lastestVersion: String?
+    @Default(.includeBetaUpdates) private var includeBetaUpdates
 
     private var version: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
@@ -276,7 +321,7 @@ struct GeneralTab: View {
     }
 
     private func logSettings(_ parameters: [String: Any]) {
-        EZLog.logEvent(withName: "settings", parameters: parameters)
+        AnalyticsService.logEvent(withName: "settings", parameters: parameters)
     }
 }
 
@@ -367,10 +412,10 @@ private struct FirstAndSecondLanguageSettingView: View {
         }
     }
 
+    @State private var languageDuplicatedAlert: LanguageDuplicateAlert?
+
     @Default(.firstLanguage) private var firstLanguage
     @Default(.secondLanguage) private var secondLanguage
-
-    @State private var languageDuplicatedAlert: LanguageDuplicateAlert?
 
     private var showLanguageDuplicatedAlert: Binding<Bool> {
         .init {

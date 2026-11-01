@@ -55,70 +55,34 @@ class ActionManager: NSObject {
 
     /// Common method to execute text replacement actions
     private func executeTextReplacementAction(_ type: ProcessingType) async {
-        guard let textFieldInfo = await systemUtility.getFocusedTextFieldInfo() else {
-            return
-        }
-        logInfo("Focused Text Field Info: \(textFieldInfo)")
-
-        // Process auto-selection and get updated text field info
-        guard let textFieldInfo = await processAutoTextSelection(for: textFieldInfo) else {
-            return
-        }
-        logInfo("Text Field Info after Auto-Selection: \(textFieldInfo)")
+        let enableSelectAll = Defaults[.autoSelectAllTextFieldText]
+        let elementInfo = await systemUtility.focusedElementInfo(enableSelectAll: enableSelectAll)
 
         // Prepare translation request
-        let queryText = textFieldInfo.focusedText
+        var queryText = elementInfo.focusedText
+        if queryText?.isEmpty ?? true {
+            queryText = await systemUtility.getSelectedText()
+        }
+
+        guard let queryText, !queryText.isEmpty else {
+            logInfo("No text selected or focused for \(type), skipping action")
+            return
+        }
+
+        // Prepare translation request
         guard let request = await prepareTranslationRequest(queryText: queryText, type: type) else {
             return
         }
 
         // Execute the streaming service
-        await performStreamingService(
-            request: request,
-            textFieldInfo: textFieldInfo
-        )
+        await performStreamingService(request: request, elementInfo: elementInfo)
     }
 
     // MARK: - Helper Methods
 
-    /// Determine the appropriate text strategy set based on the text field info and user settings
-    private func textStrategies(for textFieldInfo: TextFieldInfo) -> [TextStrategy] {
-        let isSupportedAX = textFieldInfo.isSupportedAXElement
-        let enableCompatibilityMode = Defaults[.enableCompatibilityReplace]
-
-        let isBrowser = AppleScriptTask.isBrowserSupportingAppleScript(frontmostAppBundleID)
-        let preferAppleScriptAPI = Defaults[.preferAppleScriptAPI]
-        let shouldUseAppleScript = isBrowser && preferAppleScriptAPI
-
-        return systemUtility.textStrategies(
-            shouldUseAppleScript: shouldUseAppleScript,
-            enableCompatibilityMode: enableCompatibilityMode,
-            isSupportedAX: isSupportedAX
-        )
-    }
-
-    /// Process automatic text selection based on user settings and return updated text field info
-    /// - Parameter textFieldInfo: Information about the current text field
-    /// - Returns: Updated TextFieldInfo after processing auto-selection, or nil if processing fails
-    private func processAutoTextSelection(for textFieldInfo: TextFieldInfo) async -> TextFieldInfo? {
-        let autoSelectEnabled = Defaults[.autoSelectAllTextFieldText]
-        let selectedText = textFieldInfo.selectedText?.trim() ?? ""
-
-        guard autoSelectEnabled, selectedText.isEmpty else {
-            return textFieldInfo
-        }
-
-        let textStrategy = textStrategies(for: textFieldInfo)
-        await systemUtility.selectAll(using: textStrategy)
-
-        logInfo("Auto-selected all text content in field")
-
-        return await systemUtility.getFocusedTextFieldInfo()
-    }
-
     /// Prepare translation request from text field information
     /// - Parameters:
-    ///   - textFieldInfo: Information about the current text field
+    ///   - elementInfo: Information about the current focused element
     ///   - type: The type of processing (translate or polish)
     /// - Returns: A configured TranslationRequest or nil if preparation fails
     private func prepareTranslationRequest(
@@ -127,7 +91,7 @@ class ActionManager: NSObject {
     ) async
         -> TranslationRequest? {
         // Detect language and target
-        let queryModel = try? await EZDetectManager().detectText(queryText)
+        let queryModel = try? await DetectManager().detectText(queryText)
         guard let detectedLanguage = queryModel?.detectedLanguage,
               let targetLanguage = queryModel?.queryTargetLanguage
         else {
@@ -160,9 +124,10 @@ class ActionManager: NSObject {
     /// Perform translation or polishing using a streaming service
     private func performStreamingService(
         request: TranslationRequest,
-        textFieldInfo: TextFieldInfo
+        elementInfo: FocusedElementInfo
     ) async {
-        guard let service = ServiceTypes.shared().service(withTypeId: request.serviceType) else {
+        guard let service = QueryServiceFactory.shared.service(withTypeId: request.serviceType)
+        else {
             logError("Service type \(request.serviceType) not found")
             return
         }
@@ -172,11 +137,19 @@ class ActionManager: NSObject {
             return
         }
 
+        logInfo("Using model: \(streamService.model)")
+
         do {
+            try Task.checkCancellation()
             let contentStream = try await streamService.contentStreamTranslate(request: request)
-            await replaceTextWithStream(contentStream, textFieldInfo: textFieldInfo)
+            try Task.checkCancellation()
+            await replaceTextWithStream(contentStream, elementInfo: elementInfo)
         } catch {
-            logError("stream failed: \(error.localizedDescription)")
+            if Task.isCancelled {
+                logInfo("Streaming task cancelled")
+            } else {
+                logError("stream failed: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -184,7 +157,7 @@ class ActionManager: NSObject {
     @MainActor
     private func replaceTextWithStream(
         _ contentStream: AsyncThrowingStream<String, Error>,
-        textFieldInfo: TextFieldInfo
+        elementInfo: FocusedElementInfo
     ) async {
         logInfo("Replacing text with streaming content")
 
@@ -192,13 +165,13 @@ class ActionManager: NSObject {
         let pasteboard = NSPasteboard.general
         var snapshotItems: [NSPasteboardItem]?
 
-        let isSupportedAX = textFieldInfo.isSupportedAXElement
+        let isSupportedAX = elementInfo.isSupportedAXElement
         if !isSupportedAX {
             snapshotItems = pasteboard.backupItems()
         }
 
         do {
-            let textStrategy = textStrategies(for: textFieldInfo)
+            let textStrategy = systemUtility.textStrategies(for: elementInfo)
 
             /**
              - Note:

@@ -32,7 +32,6 @@ struct KeyHolderWrapper: NSViewRepresentable {
 
     func makeNSView(context: Context) -> some NSView {
         let recordView = RecordView(frame: CGRect.zero)
-        recordView.tintColor = NSColor(red: 0.164, green: 0.517, blue: 0.823, alpha: 1)
         recordView.delegate = context.coordinator
         recordView.layer?.cornerRadius = 6.0
         recordView.layer?.masksToBounds = true
@@ -42,7 +41,7 @@ struct KeyHolderWrapper: NSViewRepresentable {
         return recordView
     }
 
-    func updateNSView(_: NSViewType, context _: Context) {}
+    func updateNSView(_ nsView: NSViewType, context: Context) {}
 
     // MARK: Private
 
@@ -67,7 +66,7 @@ extension KeyHolderWrapper {
         @Binding var confictAlterMessage: ShortcutConfictAlertMessage
 
         func recordViewShouldBeginRecording(_: KeyHolder.RecordView) -> Bool {
-            Configuration.shared.isRecordingSelectTextShortcutKey = true
+            MyConfiguration.shared.isRecordingSelectTextShortcutKey = true
             return true
         }
 
@@ -76,13 +75,13 @@ extension KeyHolderWrapper {
         }
 
         func recordViewDidEndRecording(_: RecordView) {
-            Configuration.shared.isRecordingSelectTextShortcutKey = false
+            MyConfiguration.shared.isRecordingSelectTextShortcutKey = false
         }
 
         func recordView(_ recordView: RecordView, didChangeKeyCombo keyCombo: KeyCombo?) {
             if let key = keyCombo {
                 // shortcut validate confict
-                if ShortcutManager.validateShortcut(key) {
+                if ShortcutManager.validateShortcut(key, excluding: action) {
                     let title =
                         String(
                             localized:
@@ -91,7 +90,7 @@ extension KeyHolderWrapper {
                     let message =
                         String(
                             localized:
-                            "shortcut_confict_message \(ShortcutManager.shared.confictMenuItem?.title ?? "")"
+                            "shortcut_confict_message \(ShortcutManager.shared.confictShortcutTitle)"
                         )
                     confictAlterMessage = ShortcutConfictAlertMessage(
                         title: title,
@@ -106,14 +105,14 @@ extension KeyHolderWrapper {
                 ShortcutManager.shared.updateMenu(action)
             }
             storeKeyCombo(with: keyCombo)
-            ShortcutManager.shared.bindingShortcutAction(keyCombo: keyCombo, action: action)
+            ShortcutManager.shared.bindingGlobalShortcutAction(keyCombo: keyCombo, action: action)
         }
 
         /// Restore the key combo for the given record view based on the shortcut type.
         func restoreKeyCombo(_ recordView: RecordView) {
             let keyCombo = getKeyCombo()
             recordView.keyCombo = keyCombo
-            ShortcutManager.shared.bindingShortcutAction(keyCombo: keyCombo, action: action)
+            ShortcutManager.shared.bindingGlobalShortcutAction(keyCombo: keyCombo, action: action)
         }
 
         /// Store the key combo for the shortcut type.
@@ -131,11 +130,15 @@ extension KeyHolderWrapper {
                 .inputTranslate: DefaultsKeyWrapper(.inputShortcut),
                 .snipTranslate: DefaultsKeyWrapper(.snipShortcut),
                 .selectTranslate: DefaultsKeyWrapper(.selectionShortcut),
+                .toggleAutoSelectText: DefaultsKeyWrapper(.toggleAutoSelectTextShortcut),
                 .silentScreenshotOCR: DefaultsKeyWrapper(.silentScreenshotOCRShortcut),
                 .showMiniWindow: DefaultsKeyWrapper(.showMiniWindowShortcut),
                 .pasteboardTranslate: DefaultsKeyWrapper(.pasteboardTranslateShortcut),
                 .translateAndReplace: DefaultsKeyWrapper(.translateAndReplaceShortcut),
                 .polishAndReplace: DefaultsKeyWrapper(.polishAndReplaceShortcut),
+                .screenshotOCR: DefaultsKeyWrapper(.screenshotOCRShortcut),
+                .pasteboardOCR: DefaultsKeyWrapper(.pasteboardOCRShortcut),
+                .showOCRWindow: DefaultsKeyWrapper(.showOCRWindowShortcut),
                 .clearInput: DefaultsKeyWrapper(.clearInputShortcut),
                 .clearAll: DefaultsKeyWrapper(.clearAllShortcut),
                 .copy: DefaultsKeyWrapper(.copyShortcut),

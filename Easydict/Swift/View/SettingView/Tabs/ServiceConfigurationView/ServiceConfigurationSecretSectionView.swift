@@ -42,22 +42,6 @@ struct ServiceConfigurationSecretSectionView<Content: View>: View {
 
     var footer: some View {
         HStack {
-            if service.isDuplicatable() {
-                Button {
-                    service.duplicate()
-                } label: {
-                    Text("service.configuration.duplicate")
-                }
-
-                if service.isDeletable(service.windowType) {
-                    Button("service.configuration.delete", role: .destructive) {
-                        service.remove()
-                    }
-                }
-
-                Spacer()
-            }
-
             Spacer()
 
             Button {
@@ -110,7 +94,7 @@ struct ServiceConfigurationSecretSectionView<Content: View>: View {
                 guard viewModel.isValidating else { return }
 
                 viewModel.alertTitle = "service.configuration.validation_success"
-                viewModel.errorMessage = result.errorMessage ?? ""
+                viewModel.errorMessage = result.validationMessage ?? result.errorMessage ?? ""
 
             } catch {
                 viewModel.alertTitle = "service.configuration.validation_fail"
@@ -145,6 +129,7 @@ private class ServiceValidationViewModel: ObservableObject {
     init(service: QueryService, observing keys: [Defaults.Key<String>]) {
         self.service = service
         self.name = service.name()
+        self.isValidateBtnDisabled = keys.contains(where: { Defaults[$0].isEmpty })
 
         // check secret key empty input
         Defaults.publisher(keys: keys)
@@ -169,7 +154,7 @@ private class ServiceValidationViewModel: ObservableObject {
 
     @Published var isAlertPresented = false
     @Published var isValidating = false
-    @Published var alertTitle: LocalizedStringKey = ""
+    @Published var alertTitle = LocalizedStringKey(String())
     @Published var errorMessage = ""
     @Published var isValidateBtnDisabled = false
 
@@ -186,7 +171,7 @@ private class ServiceValidationViewModel: ObservableObject {
 
     func reset() {
         isValidating = false
-        alertTitle = ""
+        alertTitle = LocalizedStringKey(String())
         errorMessage = ""
         isAlertPresented = false
     }
@@ -201,14 +186,14 @@ private class ServiceValidationViewModel: ObservableObject {
 
     private func didReceive(_ notification: Notification) {
         guard let info = notification.userInfo as? [String: Any] else { return }
-        guard let serviceType = info[EZServiceTypeKey] as? String else { return }
+        guard let serviceType = info[UserInfoKey.serviceType] as? String else { return }
         guard serviceType == service.serviceType().rawValue else { return }
         name = service.name()
     }
 }
 
 #Preview {
-    ServiceConfigurationSecretSectionView(service: EZBingService(), observeKeys: [.bingCookieKey]) {
+    ServiceConfigurationSecretSectionView(service: BingService(), observeKeys: [.bingCookieKey]) {
         SecureInputCell(
             textFieldTitleKey: "service.configuration.bing.cookie.title",
             key: .bingCookieKey

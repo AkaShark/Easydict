@@ -20,19 +20,19 @@ private class DisabledAppViewModel: ObservableObject {
 
     // MARK: Internal
 
-    @Published var appModelList: [EZAppModel] = []
-    @Published var selectedAppModels: Set<EZAppModel> = []
+    @Published var appModelList: [AppTriggerConfig] = []
+    @Published var selectedAppModels: Set<AppTriggerConfig> = []
     @Published var isShowImportErrorAlert = false
 
     @Published var isImporting = false {
         didSet {
             // https://github.com/tisfeng/Easydict/issues/346
-            Configuration.shared.disabledAutoSelect = isImporting
+            MyConfiguration.shared.disabledAutoSelect = isImporting
         }
     }
 
     func fetchDisabledApps() {
-        let allAppModelList = EZLocalStorage.shared().selectTextTypeAppModelList
+        let allAppModelList = LocalStorage.shared().selectTextTypeAppModelList
 
         appModelList = allAppModelList.compactMap { appModel in
             let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: appModel.appBundleID)
@@ -41,7 +41,7 @@ private class DisabledAppViewModel: ObservableObject {
     }
 
     func saveDisabledApps() {
-        EZLocalStorage.shared().selectTextTypeAppModelList = appModelList
+        LocalStorage.shared().selectTextTypeAppModelList = appModelList
     }
 
     func removeDisabledApp() {
@@ -66,8 +66,8 @@ private class DisabledAppViewModel: ObservableObject {
         saveDisabledApps()
     }
 
-    func disabledAppModel(from url: URL) -> EZAppModel? {
-        let appModel = EZAppModel()
+    func disabledAppModel(from url: URL) -> AppTriggerConfig? {
+        let appModel = AppTriggerConfig()
         guard let bundle = Bundle(url: url) else { return nil }
         appModel.appBundleID = bundle.bundleIdentifier ?? ""
         appModel.triggerType = []
@@ -97,7 +97,7 @@ struct DisabledAppTab: View {
             }
             .alert(isPresented: $disabledAppViewModel.isShowImportErrorAlert) {
                 Alert(
-                    title: Text(""),
+                    title: Text(verbatim: ""),
                     message: Text("setting.disabled.import_app_error.message"),
                     dismissButton: .default(Text("ok"))
                 )
@@ -122,11 +122,7 @@ struct DisabledAppTab: View {
 
             listToolbar
         }
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(content: {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color("list_border_color"), lineWidth: 0.5)
-        })
+        .borderedCard()
         .padding(.horizontal, 25)
         .padding(.bottom, 25)
         .onTapGesture {
@@ -186,7 +182,8 @@ private struct ListToolbar: View {
 // MARK: - ListButton
 
 private struct ListButton: View {
-    @Environment(\.isEnabled) private var isEnabled: Bool
+    // MARK: Internal
+
     var systemName: String
     var action: () -> ()
 
@@ -205,6 +202,10 @@ private struct ListButton: View {
         }
         .buttonStyle(BorderlessButtonStyle())
     }
+
+    // MARK: Private
+
+    @Environment(\.isEnabled) private var isEnabled: Bool
 }
 
 // MARK: - BlockAppItemView
@@ -212,7 +213,7 @@ private struct ListButton: View {
 private struct BlockAppItemView: View {
     // MARK: Lifecycle
 
-    init(with appModel: EZAppModel) {
+    init(with appModel: AppTriggerConfig) {
         _appItemViewModel = StateObject(wrappedValue: AppItemViewModel(appModel: appModel))
     }
 
@@ -247,7 +248,7 @@ private struct BlockAppItemView: View {
 private class AppItemViewModel: ObservableObject {
     // MARK: Lifecycle
 
-    init(appModel: EZAppModel) {
+    init(appModel: AppTriggerConfig) {
         self.appModel = appModel
         getAppBundleInfo()
     }
@@ -258,7 +259,7 @@ private class AppItemViewModel: ObservableObject {
 
     @Published var appName = ""
 
-    var appModel: EZAppModel
+    var appModel: AppTriggerConfig
 
     func getAppBundleInfo() {
         let appBundleId = appModel.appBundleID

@@ -14,11 +14,12 @@ import SFSafeSymbols
 // MARK: - ShortcutAction
 
 /// Enum representing different application actions that can be triggered by shortcuts
-public enum ShortcutAction: String, Identifiable {
+public enum ShortcutAction: String, Identifiable, CaseIterable {
     // Global shortcuts
     case inputTranslate
     case snipTranslate
     case selectTranslate
+    case toggleAutoSelectText
     case showMiniWindow
     case pasteboardTranslate
     case polishAndReplace
@@ -53,6 +54,32 @@ public enum ShortcutAction: String, Identifiable {
 }
 
 extension ShortcutAction {
+    /// All global shortcut actions (system-wide hotkeys)
+    static let globalActions: [ShortcutAction] = [
+        .inputTranslate,
+        .snipTranslate,
+        .selectTranslate,
+        .toggleAutoSelectText,
+        .showMiniWindow,
+        .pasteboardTranslate,
+        .polishAndReplace,
+        .translateAndReplace,
+        .silentScreenshotOCR,
+        .screenshotOCR,
+        .pasteboardOCR,
+        .showOCRWindow,
+    ]
+
+    /// All app-specific shortcut actions (only active when app is focused)
+    static var appActions: [ShortcutAction] {
+        allCases.filter { !globalActions.contains($0) }
+    }
+
+    /// Whether this action is a global shortcut (system-wide hotkey)
+    var isGlobal: Bool {
+        Self.globalActions.contains(self)
+    }
+
     /// Get configuration for the shortcut type
     var configuration: ActionConfiguration {
         Self.configurations[self]
@@ -111,6 +138,22 @@ extension ShortcutAction {
                 icon: .highlighter,
                 defaultsKey: .selectionShortcut,
                 action: { windowManager.selectTextTranslate() }
+            ),
+            .toggleAutoSelectText: .init(
+                titleKey: "shortcut_toggle_auto_select_text",
+                icon: .cursorarrowRays,
+                defaultsKey: .toggleAutoSelectTextShortcut,
+                action: {
+                    let isOn = !Defaults[.autoShowQueryIcon]
+                    Defaults[.autoShowQueryIcon] = isOn
+                    let message = NSLocalizedString(
+                        isOn
+                            ? "shortcut_auto_select_text.on"
+                            : "shortcut_auto_select_text.off",
+                        comment: ""
+                    )
+                    EZToast.showText(message)
+                }
             ),
             .silentScreenshotOCR: .init(
                 titleKey: "menu_silent_screenshot_OCR",
@@ -229,8 +272,8 @@ extension ShortcutAction {
                 icon: .textformatAlt,
                 defaultsKey: .increaseFontSize,
                 action: {
-                    if Configuration.shared.fontSizeIndex < Configuration.shared.fontSizes.count - 1 {
-                        Configuration.shared.fontSizeIndex += 1
+                    if MyConfiguration.shared.fontSizeIndex < MyConfiguration.shared.fontSizes.count - 1 {
+                        MyConfiguration.shared.fontSizeIndex += 1
                     }
                 }
             ),
@@ -239,8 +282,8 @@ extension ShortcutAction {
                 icon: .textformatAlt,
                 defaultsKey: .decreaseFontSize,
                 action: {
-                    if Configuration.shared.fontSizeIndex > 0 {
-                        Configuration.shared.fontSizeIndex -= 1
+                    if MyConfiguration.shared.fontSizeIndex > 0 {
+                        MyConfiguration.shared.fontSizeIndex -= 1
                     }
                 }
             ),

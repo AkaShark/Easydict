@@ -6,8 +6,10 @@
 //  Copyright © 2025 izual. All rights reserved.
 //
 
+import AppKit
 import CoreImage
 import Foundation
+import NaturalLanguage
 @preconcurrency import Vision
 
 // MARK: - AppleOCREngine
@@ -34,15 +36,24 @@ public class AppleOCREngine: NSObject {
     /// - Parameters:
     ///   - image: The `NSImage` to recognize text from.
     ///   - language: The preferred `Language` for recognition. Defaults to `.auto`.
+    ///   - requiresAccurateRecognition: Whether to perform a second-pass OCR for accurate recognition.
+    ///     **⚠️ Important**: When enabled, this may significantly increase processing time as it runs
+    ///     multi-language OCR concurrently to select the most accurate result. Only enable when
+    ///     high accuracy is required. Defaults to `false`.
     /// - Returns: An `EZOCRResult` containing the recognized and processed text.
-    func recognizeText(image: NSImage, language: Language = .auto) async throws -> EZOCRResult {
-        log("Recognizing text in image with language: \(language), image size: \(image.size)")
+    func recognizeText(
+        image: NSImage,
+        language: Language = .auto,
+        requiresAccurateRecognition: Bool = false
+    ) async throws
+        -> EZOCRResult {
+        logInfo("Recognizing text in image with language: \(language), image size: \(image.size)")
 
         guard image.isValid else {
             throw QueryError.error(type: .parameter, message: "Invalid image provided for OCR")
         }
 
-        image.mm_writeToFile(asPNG: OCRConstants.snipImageFileURL.path())
+        image.write(to: OCRConstants.snipImageFileURL, using: .png)
 
         // Convert NSImage to CGImage
         guard let cgImage = image.toCGImage() else {
@@ -56,8 +67,8 @@ public class AppleOCREngine: NSObject {
         // Perform Vision OCR using unified API
         let observations = try await performVisionOCR(on: cgImage, language: language)
 
-        log("Recognize observations count: \(observations.count) (\(language))")
-        log("Cost time: \(startTime.elapsedTimeString) seconds")
+        logInfo("Recognize observations count: \(observations.count) (\(language))")
+        logInfo("Cost time: \(startTime.elapsedTimeString) seconds")
 
         let ocrResult = EZOCRResult()
         ocrResult.from = language
@@ -66,7 +77,7 @@ public class AppleOCREngine: NSObject {
         let detectedLanguage = languageDetector.detectLanguage(text: mergedText)
         let rawProbabilities = languageDetector.rawProbabilities
         let textAnalysis = languageDetector.getTextAnalysis()
-        log(
+        logInfo(
             "Detected language: \(detectedLanguage), probabilities: \(rawProbabilities.prettyPrinted)"
         )
 
@@ -74,10 +85,14 @@ public class AppleOCREngine: NSObject {
         // If text is too short, we need to recognize it with all candidate languages.
         let hasEnoughLength = mergedText.count > 50
         let hasDesignatedLanguage = language != .auto
-        let smartMerging =
-            hasDesignatedLanguage || hasEnoughLength || hasDominantLanguage(in: rawProbabilities)
-        log("Merged text char count: \(mergedText.count)")
-        log("Performing OCR text processing, smart merging: \(smartMerging)")
+
+        let smartMerging = hasDesignatedLanguage
+            || hasEnoughLength
+            || hasDominantLanguage(in: rawProbabilities)
+            || rawProbabilities.isEmpty
+
+        logInfo("Merged text char count: \(mergedText.count)")
+        logInfo("Performing OCR text processing, smart merging: \(smartMerging)")
 
         textProcessor.setupOCRResult(
             ocrResult,
@@ -91,8 +106,14 @@ public class AppleOCREngine: NSObject {
             ocrResult.from = detectedLanguage
         }
 
-        if smartMerging {
-            log("OCR completion (\(language)) cost time: \(startTime.elapsedTimeString) seconds")
+        // Determine whether to perform second-pass OCR:
+        // 1. If requiresAccurateRecognition is false, skip second pass regardless of smartMerging
+        // 2. If requiresAccurateRecognition is true but smartMerging is true, still skip second pass
+        //    (we're already confident enough with the result)
+        // 3. Only perform second pass when requiresAccurateRecognition is true AND smartMerging is false
+
+        if !requiresAccurateRecognition || smartMerging {
+            logInfo("OCR completion (\(language)) cost time: \(startTime.elapsedTimeString) seconds")
             return ocrResult
         }
 
@@ -105,8 +126,8 @@ public class AppleOCREngine: NSObject {
             candidates: rawProbabilities
         )
 
-        log("Get most confident OCR cost time: \(startSelectTime.elapsedTimeString) seconds")
-        log("Total OCR cost time: \(startTime.elapsedTimeString) seconds")
+        logInfo("Get most confident OCR cost time: \(startSelectTime.elapsedTimeString) seconds")
+        logInfo("Total OCR cost time: \(startTime.elapsedTimeString) seconds")
 
         return mostConfidentResult
     }
@@ -115,7 +136,11 @@ public class AppleOCREngine: NSObject {
         logInfo("Pasteboard OCR")
         if let image = NSPasteboard.general.image {
             Task {
-                try await showOCRWindow(image: image)
+                do {
+                    try await showOCRWindow(image: image)
+                } catch {
+                    logError("Pasteboard OCR failed: \(error.localizedDescription)")
+                }
             }
         }
     }
@@ -194,7 +219,7 @@ public class AppleOCREngine: NSObject {
          */
 
         if observations.isEmpty, language == .auto {
-            log("No text recognized with auto language, retrying with Japanese.")
+            logInfo("No text recognized with auto language, retrying with Japanese.")
             return try await performSingleLegacyVisionOCR(on: cgImage, language: .japanese)
         }
 
@@ -205,36 +230,42 @@ public class AppleOCREngine: NSObject {
     private func performSingleLegacyVisionOCR(on cgImage: CGImage, language: Language) async throws
         -> [VNRecognizedTextObservation] {
         try await withCheckedThrowingContinuation { continuation in
+            // Guard against double-resume: Vision may invoke the completion handler
+            // and also throw from perform(), so only resume once.
+            let continuationGate = ContinuationGate(continuation: continuation)
+
             let request = VNRecognizeTextRequest { request, error in
                 if let error {
                     let queryError = QueryError.queryError(from: error, type: .api)!
-                    continuation.resume(throwing: queryError)
+                    continuationGate.resume(throwing: queryError)
                     return
                 }
 
-                let results = request.results as! [VNRecognizedTextObservation]
+                // Use safe cast instead of force cast: request.results can be nil
+                // when Vision completes without producing observations.
+                let results = (request.results as? [VNRecognizedTextObservation]) ?? []
                 if results.isEmpty {
-                    log("No text recognized in the image with language: \(language)")
+                    logInfo("No text recognized in the image with language: \(language)")
 
                     // For empty results, don't throw error - let caller handle retry logic
                     if language == .auto {
                         // Return empty array, caller will handle Japanese retry
-                        continuation.resume(returning: [])
+                        continuationGate.resume(returning: [])
                         return
                     } else {
                         // For specific language, throw error
                         let message = String(localized: "ocr_result_is_empty")
                         let error = QueryError.error(type: .noResult, message: message)
-                        continuation.resume(throwing: error)
+                        continuationGate.resume(throwing: error)
                         return
                     }
                 }
 
-                continuation.resume(returning: results)
+                continuationGate.resume(returning: results)
             }
 
             let enableAutoDetect = !hasValidOCRLanguage(language)
-            log("Performing Vision with language: \(language), auto detect: \(enableAutoDetect)")
+            logInfo("Performing Vision with language: \(language), auto detect: \(enableAutoDetect)")
 
             // Configure Vision request
             request.recognitionLevel = .accurate
@@ -254,7 +285,7 @@ public class AppleOCREngine: NSObject {
                     try requestHandler.perform([request])
                 } catch {
                     let queryError = QueryError.queryError(from: error, type: .api)!
-                    continuation.resume(throwing: queryError)
+                    continuationGate.resume(throwing: queryError)
                 }
             }
         }
@@ -275,7 +306,7 @@ public class AppleOCREngine: NSObject {
         candidates languageProbabilities: [NLLanguage: Double]
     ) async throws
         -> EZOCRResult {
-        log("Selecting best OCR from candidates: \(languageProbabilities.prettyPrinted)")
+        logInfo("Selecting best OCR from candidates: \(languageProbabilities.prettyPrinted)")
 
         // Run concurrent OCR for all candidates
         let results = try await performConcurrentOCR(
@@ -348,7 +379,12 @@ public class AppleOCREngine: NSObject {
 
         // Return best trusted result, or fallback to highest confidence
         let candidates = trusted.isEmpty ? results : trusted
-        return candidates.max { $0.confidence < $1.confidence }!
+        guard let best = candidates.max(by: { $0.confidence < $1.confidence }) else {
+            // Should not happen since results is guaranteed non-empty by caller,
+            // but guard against unexpected edge cases to avoid a crash.
+            return results[0]
+        }
+        return best
     }
 
     /// Determines if there is a dominant language in the raw probabilities.
@@ -377,7 +413,7 @@ public class AppleOCREngine: NSObject {
         // Check both conditions for dominant language
         let hasDominant =
             highest > minDominantProbability && (highest - secondHighest) > minProbabilityGap
-        log(
+        logInfo(
             "Has dominant language: \(hasDominant), highest: \(highest.string2f), second highest: \(secondHighest.string2f)"
         )
 
@@ -402,13 +438,13 @@ public class AppleOCREngine: NSObject {
         // So we only use it on macOS 26.0+ for now.
         // Fix https://github.com/tisfeng/Easydict/pull/950#issuecomment-3222553146
         if #available(macOS 26.0, *) {
-            log("Using modern RecognizeTextRequest API")
+            logInfo("Using modern RecognizeTextRequest API")
             let modernObservations = try await performModernVisionOCR(
                 on: cgImage, language: language
             )
             return modernObservations.toEZRecognizedTextObservations()
         } else {
-            log("Using legacy VNRecognizeTextRequest API")
+            logInfo("Using legacy VNRecognizeTextRequest API")
             let legacyObservations = try await performLegacyVisionOCR(
                 on: cgImage, language: language
             )
@@ -426,7 +462,7 @@ public class AppleOCREngine: NSObject {
         let observations = try await performSingleModernVisionOCR(on: cgImage, language: language)
 
         if observations.isEmpty, language == .auto {
-            log("No text recognized with auto language, retrying with Japanese.")
+            logInfo("No text recognized with auto language, retrying with Japanese.")
             return try await performSingleModernVisionOCR(on: cgImage, language: .japanese)
         }
 
@@ -439,7 +475,7 @@ public class AppleOCREngine: NSObject {
         async throws
         -> [RecognizedTextObservation] {
         let enableAutoDetect = !hasValidOCRLanguage(language, isModernOCR: true)
-        log(
+        logInfo(
             "Performing modern Vision OCR with language: \(language), auto detect: \(enableAutoDetect)"
         )
 
@@ -459,7 +495,7 @@ public class AppleOCREngine: NSObject {
             let recognizedTexts = try await request.perform(on: cgImage)
 
             if recognizedTexts.isEmpty {
-                log("No text recognized in the image with language: \(language)")
+                logInfo("No text recognized in the image with language: \(language)")
 
                 // For empty results, don't throw error - let caller handle retry logic
                 if language == .auto {
@@ -480,5 +516,46 @@ public class AppleOCREngine: NSObject {
                     type: .api, message: "Vision OCR request failed: \(error.localizedDescription)"
                 )
         }
+    }
+}
+
+// MARK: - ContinuationGate
+
+/// Coordinates a checked continuation so only the first completion wins.
+///
+/// Vision can call its completion handler and also throw from `perform()`.
+/// The lock keeps that race from resuming the same continuation twice.
+private final class ContinuationGate<T, E: Error>: @unchecked Sendable {
+    // MARK: Lifecycle
+
+    init(continuation: CheckedContinuation<T, E>) {
+        self.continuation = continuation
+    }
+
+    // MARK: Internal
+
+    func resume(returning value: T) {
+        guard let continuation = takeContinuation() else { return }
+        continuation.resume(returning: value)
+    }
+
+    func resume(throwing error: E) {
+        guard let continuation = takeContinuation() else { return }
+        continuation.resume(throwing: error)
+    }
+
+    // MARK: Private
+
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<T, E>?
+
+    /// Takes the stored continuation once, returning nil after completion.
+    private func takeContinuation() -> CheckedContinuation<T, E>? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let continuation = continuation
+        self.continuation = nil
+        return continuation
     }
 }

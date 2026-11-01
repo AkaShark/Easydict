@@ -13,7 +13,7 @@
 #import "NSImage+EZSymbolmage.h"
 #import "NSObject+EZDarkMode.h"
 #import "EZBaseQueryWindow.h"
-#import "Easydict-Swift.h"
+
 
 typedef NS_ENUM(NSInteger, EZTitlebarButtonType) {
     EZTitlebarButtonTypePin = 0,
@@ -43,6 +43,10 @@ typedef NS_ENUM(NSInteger, EZTitlebarButtonType) {
         [self setup];
     }
     return self;
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 - (void)setup {
@@ -76,7 +80,8 @@ typedef NS_ENUM(NSInteger, EZTitlebarButtonType) {
     [_stackView removeFromSuperview];
     _stackView = nil;
     _quickActionButton = nil;
-    
+    _quickActionMenu = nil;
+
     [self updatePinButton];
     
     [self addSubview:self.pinButton];
@@ -100,7 +105,7 @@ typedef NS_ENUM(NSInteger, EZTitlebarButtonType) {
         make.right.equalTo(self).offset(-margin);
     }];
     
-    if (Configuration.shared.showQuickActionButton) {
+    if (MyConfiguration.shared.showQuickActionButton) {
         [self.stackView addArrangedSubview:self.quickActionButton];
     }
     
@@ -173,6 +178,10 @@ typedef NS_ENUM(NSInteger, EZTitlebarButtonType) {
                 self.pin = oldPin;
             }
         }];
+
+        [self executeOnAppearanceChange:^(EZTitlebar *titlebar, BOOL isDarkMode) {
+            [titlebar updatePinButtonImage];
+        }];
     }
     return _pinButton;
 }
@@ -193,6 +202,10 @@ typedef NS_ENUM(NSInteger, EZTitlebarButtonType) {
         NSMenu *menu = [NSMenu new];
         NSArray *menuSections = @[
             @[
+                @{
+                    @"title" : @"add_to_favorites",
+                    @"action" : NSStringFromSelector(@selector(addFavoriteIfNeeded))
+                },
                 @{
                     @"title" : @"replace_newline_with_space",
                     @"action" : NSStringFromSelector(@selector(replaceNewlineWithSpace))
@@ -224,7 +237,7 @@ typedef NS_ENUM(NSInteger, EZTitlebarButtonType) {
                 [menu addItem:menuItem];
             }
             // Add separatorItem
-            if (section != menuSections.lastObject) {
+            if (section != menuSections.lastObject && section.count > 0) {
                 [menu addItem:[NSMenuItem separatorItem]];
             }
         }
@@ -251,10 +264,9 @@ typedef NS_ENUM(NSInteger, EZTitlebarButtonType) {
         NSColor *darkTintColor = [NSColor mm_colorWithHexString:@"#C0C1C4"];
         CGSize imageSize = CGSizeMake(20, 20);
         
-        [quickActionButton excuteLight:^(EZButton *button) {
-            button.image = [[image imageWithTintColor:lightTintColor] resizeToSize:imageSize];
-        } dark:^(EZButton *button) {
-            button.image = [[image imageWithTintColor:darkTintColor] resizeToSize:imageSize];
+        [quickActionButton executeOnAppearanceChange:^(EZButton *button, BOOL isDarkMode) {
+            NSColor *tintColor = isDarkMode ? darkTintColor : lightTintColor;
+            button.image = [[image imageWithTintColor:tintColor] resizeToSize:imageSize];
         }];
         
         [quickActionButton mas_makeConstraints:^(MASConstraintMaker *make) {
@@ -307,17 +319,17 @@ typedef NS_ENUM(NSInteger, EZTitlebarButtonType) {
     NSMutableArray *shortcutButtonTypes = [NSMutableArray array];
     
     // Google
-    if (Configuration.shared.showGoogleQuickLink) {
+    if (MyConfiguration.shared.showGoogleQuickLink) {
         [shortcutButtonTypes addObject:@(EZTitlebarButtonTypeGoogle)];
     }
     
     // Apple Dictionary
-    if (Configuration.shared.showAppleDictionaryQuickLink) {
+    if (MyConfiguration.shared.showAppleDictionaryQuickLink) {
         [shortcutButtonTypes addObject:@(EZTitlebarButtonTypeAppleDic)];
     }
     
     // Eudic
-    if (Configuration.shared.showEudicQuickLink) {
+    if (MyConfiguration.shared.showEudicQuickLink) {
         // Fix https://github.com/tisfeng/Easydict/issues/957#issuecomment-3261505123
         // Since edudic has multiple bundle ids, we don't check if installed.
         [shortcutButtonTypes addObject:@(EZTitlebarButtonTypeEudicDic)];
@@ -373,16 +385,16 @@ typedef NS_ENUM(NSInteger, EZTitlebarButtonType) {
     NSString *shortcutStr = @"";
     NSString *hint = @"";
     if (type == EZTitlebarButtonTypePin) {
-        shortcutStr = Configuration.shared.pinShortcutString;
+        shortcutStr = MyConfiguration.shared.pinShortcutString;
         hint = self.pin ? NSLocalizedString(@"unpin", nil) : NSLocalizedString(@"pin", nil);
     } else if (type == EZTitlebarButtonTypeGoogle) {
-        shortcutStr = Configuration.shared.googleShortcutString;
+        shortcutStr = MyConfiguration.shared.googleShortcutString;
         hint = NSLocalizedString(@"open_in_google", nil);
     } else if (type == EZTitlebarButtonTypeAppleDic) {
-        shortcutStr = Configuration.shared.appleDictShortcutString;
+        shortcutStr = MyConfiguration.shared.appleDictShortcutString;
         hint = NSLocalizedString(@"open_in_apple_dictionary", nil);
     } else if (type == EZTitlebarButtonTypeEudicDic) {
-        shortcutStr = Configuration.shared.eudicDictShortcutString;
+        shortcutStr = MyConfiguration.shared.eudicDictShortcutString;
         hint = NSLocalizedString(@"open_in_eudic", nil);
     }
     if (shortcutStr.length != 0) {
@@ -395,31 +407,48 @@ typedef NS_ENUM(NSInteger, EZTitlebarButtonType) {
 
 - (void)updatePinButton {
     self.pinButton.toolTip = [self toolTipStrWithButtonType:EZTitlebarButtonTypePin];
-    
+    [self updatePinButtonImage];
+}
+
+- (void)updatePinButtonImage {
     CGFloat imageWidth = 18;
     CGSize imageSize = CGSizeMake(imageWidth, imageWidth);
-    
+
     // Since the system's dark picture mode cannot dynamically follow the mode switch changes, we manually implement dark mode picture coloring.
     NSColor *pinNormalLightTintColor = [NSColor mm_colorWithHexString:@"#797A7F"];
     NSColor *pinNormalDarkTintColor = [NSColor mm_colorWithHexString:@"#C0C1C4"];
-    
-    NSImage *normalLightImage = [[NSImage imageNamed:@"new_pin_normal"] resizeToSize:imageSize];
-    normalLightImage = [normalLightImage imageWithTintColor:pinNormalLightTintColor];
-    NSImage *normalDarkImage = [normalLightImage imageWithTintColor:pinNormalDarkTintColor];
-    
+
+    NSImage *normalImage = [[NSImage imageNamed:@"new_pin_normal"] resizeToSize:imageSize];
     NSImage *selectedImage = [[NSImage imageNamed:@"new_pin_selected"] resizeToSize:imageSize];
-    
-    mm_weakify(self);
-    [self.pinButton excuteLight:^(EZHoverButton *button) {
-        mm_strongify(self)
-        NSImage *image = self.pin ? selectedImage : normalLightImage;
-        button.image = image;
-    } dark:^(EZHoverButton *button) {
-        mm_strongify(self)
-        NSImage *image = self.pin ? selectedImage : normalDarkImage;
-        button.image = image;
-    }];
+
+    BOOL isDarkMode = self.pinButton.isDarkMode;
+    NSColor *pinTintColor = isDarkMode ? pinNormalDarkTintColor : pinNormalLightTintColor;
+    NSImage *normalTintedImage = [normalImage imageWithTintColor:pinTintColor];
+    self.pinButton.image = self.pin ? selectedImage : normalTintedImage;
 }
+
+- (void)addFavoriteIfNeeded {
+    EZBaseQueryWindow *window = (EZBaseQueryWindow *)self.window;
+    EZBaseQueryViewController *viewController = window.queryViewController;
+    EZQueryModel *queryModel = viewController.queryModel;
+    
+    NSString *queryText = queryModel.queryText;
+    if (queryText.length == 0) {
+        return;
+    }
+    
+    BOOL isFavorited = [QueryRecordManager.shared containsRecordWithQueryText:queryText
+                                                                            in:RecordTypeFavorites];
+    if (!isFavorited) {
+        NSString *translatedResult = [viewController firstTranslatedText];
+        [QueryRecordManager.shared addRecordWithQueryText:queryText
+                                             fromLanguage:queryModel.queryFromLanguage
+                                               toLanguage:queryModel.queryTargetLanguage
+                                         translatedResult:translatedResult
+                                                      to:RecordTypeFavorites];
+    }
+}
+
 
 /// Check if installed app according to bundle id array
 - (BOOL)checkInstalledApp:(NSArray<NSString *> *)bundleIds {

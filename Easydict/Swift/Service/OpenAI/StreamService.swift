@@ -6,6 +6,7 @@
 //  Copyright © 2024 izual. All rights reserved.
 //
 
+import Alamofire
 import Combine
 import Defaults
 import Foundation
@@ -19,7 +20,7 @@ import SwiftUI
 public class StreamService: QueryService {
     // MARK: Lifecycle
 
-    override init() {
+    required init() {
         super.init()
 
         // Since getter Defaults[key] cost CPU high when update too frequently, we observe it here.
@@ -32,17 +33,27 @@ public class StreamService: QueryService {
             .store(in: &cancellables)
     }
 
+    // MARK: Open
+
+    /// Cancels the current streaming request manually.
+    open override func cancelStream() {}
+
     // MARK: Public
 
+    /// Whether the service should be treated as stream-capable by higher layers.
+    ///
+    /// This describes service capability, not the concrete transport of the current request.
+    /// UI code uses this semantic to decide behaviors such as showing the stop button and
+    /// delaying auto-copy until the stream finishes.
     public override func isStream() -> Bool {
         true
     }
 
     public override func intelligentQueryTextType() -> EZQueryTextType {
-        Configuration.shared.intelligentQueryTextTypeForServiceType(serviceType())
+        MyConfiguration.shared.intelligentQueryTextTypeForServiceType(serviceType())
     }
 
-    public override func supportLanguagesDictionary() -> MMOrderedDictionary<AnyObject, AnyObject> {
+    public override func supportLanguagesDictionary() -> MMOrderedDictionary {
         let allLanguages = EZLanguageManager.shared().allLanguages
         let supportedLanguages = allLanguages.filter { language in
             !unsupportedLanguages.contains(language)
@@ -71,35 +82,115 @@ public class StreamService: QueryService {
     }
 
     public override func serviceUsageStatus() -> EZServiceUsageStatus {
-        let usageStatus = Defaults[serviceUsageStatusKey]
-        guard let value = UInt(usageStatus.rawValue) else { return .default }
-        return EZServiceUsageStatus(rawValue: value) ?? .default
+        Defaults[serviceUsageStatusKey].ezStatus
     }
 
     public override func configurationListItems() -> Any? {
         StreamConfigurationView(service: self)
     }
 
+    /// Translate text and return the final streaming result.
+    @nonobjc
     public override func translate(
         _ text: String,
         from: Language,
-        to: Language,
-        completion: @escaping (EZQueryResult, Error?) -> ()
-    ) {
-        let queryResultStream = streamTranslate(text: text, from: from, to: to)
+        to: Language
+    ) async throws
+        -> QueryResult {
+        var latestResult = result ?? QueryResult()
+        do {
+            for try await result in translateStream(text, from: from, to: to) {
+                latestResult = result
+            }
+        } catch {
+            latestResult = result ?? latestResult
+            if latestResult.error == nil {
+                latestResult.error = QueryError.queryError(from: error)
+            }
+            throw error
+        }
+        return latestResult
+    }
+
+    /// Translate text and return a throttled stream of results.
+    @nonobjc
+    public override func translateStream(
+        _ text: String,
+        from: Language,
+        to: Language
+    )
+        -> AsyncThrowingStream<QueryResult, Error> {
+        let activeResult = result ?? QueryResult()
+        if result == nil {
+            result = activeResult
+        }
+        // Capture the current result generation with the result object. Later
+        // chunks are ignored if a reset starts a newer query on this service.
+        let activeGeneration = resultGeneration
+        let queryResultStream = streamTranslate(
+            text: text,
+            from: from,
+            to: to,
+            targetResult: activeResult,
+            targetGeneration: activeGeneration
+        )
         let textStream = queryResultStreamToTextStream(queryResultStream)
 
-        Task {
-            do {
-                try await throttleUpdateResultText(
-                    textStream, queryType: supportedQueryType(), error: nil
-                ) { result in
-                    completion(result, result.error)
+        return AsyncThrowingStream { [weak self] continuation in
+            Task {
+                guard let self else {
+                    continuation.finish()
+                    return
                 }
-            } catch {
-                completion(result, error)
+
+                var didYieldError = false
+
+                do {
+                    try await self.throttleUpdateResultText(
+                        textStream,
+                        queryType: self.supportedQueryType(),
+                        error: nil,
+                        targetResult: activeResult,
+                        targetGeneration: activeGeneration
+                    ) { result in
+                        if result.error != nil {
+                            didYieldError = true
+                        }
+                        continuation.yield(result)
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
+                    let cancellationResult = self.result ?? QueryResult()
+                    if self.result == nil {
+                        self.result = cancellationResult
+                    }
+                    cancellationResult.isStreamFinished = true
+                    cancellationResult.error = nil
+                    continuation.yield(cancellationResult)
+                    continuation.finish()
+                } catch {
+                    if !didYieldError {
+                        let errorResult = self.result ?? QueryResult()
+                        if self.result == nil {
+                            self.result = errorResult
+                        }
+                        if errorResult.error == nil {
+                            errorResult.error = QueryError.queryError(from: error)
+                        }
+                        continuation.yield(errorResult)
+                    }
+                    continuation.finish(throwing: error)
+                }
             }
         }
+    }
+
+    public override func apiKeyRequirement() -> ServiceAPIKeyRequirement {
+        .userProvided
+    }
+
+    public override func hasPrivateAPIKey() -> Bool {
+        !apiKey.isEmpty
     }
 
     // MARK: Internal
@@ -112,6 +203,26 @@ public class StreamService: QueryService {
     var cancellables: Set<AnyCancellable> = []
 
     var hideThinkTagContent: Bool = true
+
+    /// Whether requests currently use streaming transport over the network.
+    ///
+    /// This is intentionally narrower than `isStream()`: a service may remain stream-capable
+    /// while temporarily using a non-streaming transport, such as Custom OpenAI fallback mode.
+    var usesStreamingTransport: Bool {
+        enableStreaming
+    }
+
+    var canFetchRemoteModels: Bool {
+        false
+    }
+
+    var remoteModelsEndpoint: String? {
+        nil
+    }
+
+    var remoteModelFetchRequiresEndpoint: Bool {
+        true
+    }
 
     var model: String {
         get {
@@ -196,10 +307,6 @@ public class StreamService: QueryService {
         Defaults[apiKeyKey]
     }
 
-    var requireAPIKey: Bool {
-        true
-    }
-
     var apiKeyKey: Defaults.Key<String> {
         stringDefaultsKey(.apiKey)
     }
@@ -212,11 +319,11 @@ public class StreamService: QueryService {
         stringDefaultsKey(.endpoint, defaultValue: defaultEndpoint)
     }
 
-    var endpointPlaceholder: LocalizedStringKey {
+    var endpointPlaceholder: String {
         defaultEndpoint
             .isEmpty
-            ? "service.configuration.openai.endpoint.placeholder"
-            : LocalizedStringKey(defaultEndpoint)
+            ? String(localized: "service.configuration.openai.endpoint.placeholder")
+            : defaultEndpoint
     }
 
     var defaultEndpoint: String {
@@ -236,7 +343,7 @@ public class StreamService: QueryService {
     }
 
     var isSentenceEnabledByDefault: Bool {
-        true
+        false
     }
 
     var dictionaryKey: Defaults.Key<String> {
@@ -244,7 +351,7 @@ public class StreamService: QueryService {
     }
 
     var isDictionaryEnabledByDefault: Bool {
-        true
+        false
     }
 
     var serviceUsageStatusKey: Defaults.Key<ServiceUsageStatus> {
@@ -264,7 +371,7 @@ public class StreamService: QueryService {
         ]
     }
 
-    var apiKeyPlaceholder: LocalizedStringKey {
+    var apiKeyPlaceholder: String {
         "\(serviceType().rawValue) API Key"
     }
 
@@ -276,6 +383,34 @@ public class StreamService: QueryService {
         Defaults[temperatureKey]
     }
 
+    var enableStreamingKey: Defaults.Key<Bool> {
+        boolDefaultsKey(.enableStreaming, defaultValue: true)
+    }
+
+    var enableStreaming: Bool {
+        get { Defaults[enableStreamingKey] }
+        set { Defaults[enableStreamingKey] = newValue }
+    }
+
+    /// Whether this service exposes the shared reasoning effort picker and
+    /// sends the reasoning effort parameters. Defaults to `false`; services
+    /// that support reasoning override it to `true` and read `reasoningEffort`
+    /// when building their request.
+    var supportsReasoningEffort: Bool {
+        false
+    }
+
+    /// Storage key for the shared `off/high/max` reasoning effort. Named
+    /// distinctly from CodexCLIService's CLI-specific `reasoningEffortKey`,
+    /// which uses a different effort type, so the two can coexist.
+    var reasoningEffortDefaultsKey: Defaults.Key<ReasoningEffort> {
+        serviceDefaultsKey(.reasoningEffort, defaultValue: .off)
+    }
+
+    var reasoningEffort: ReasoningEffort {
+        Defaults[reasoningEffortDefaultsKey]
+    }
+
     func validModels(from supportedModels: String) -> [String] {
         supportedModels.components(separatedBy: ",")
             .map { $0.trim() }.filter { !$0.isEmpty }
@@ -283,6 +418,43 @@ public class StreamService: QueryService {
 
     func supportedModels(from validModels: [String]) -> String {
         validModels.joined(separator: ", ")
+    }
+
+    func fetchRemoteModelIDs() async throws -> [String] {
+        throw QueryError(type: .unsupportedQueryType)
+    }
+
+    func normalizedRemoteModelIDs(_ ids: [String]) -> [String] {
+        var seenModels = Set<String>()
+        return ids
+            .map { $0.trim() }
+            .filter { !$0.isEmpty }
+            .filter { seenModels.insert(remoteModelLookupID($0)).inserted }
+    }
+
+    func remoteModelLookupID(_ modelID: String) -> String {
+        modelID.trim().lowercased()
+    }
+
+    func remoteModelGroupName(_ modelID: String) -> String? {
+        nil
+    }
+
+    func fetchRemoteModelData(url: URL, headers: HTTPHeaders = []) async throws -> Data {
+        let response = await AF.request(
+            url,
+            method: .get,
+            headers: headers,
+            requestModifier: { $0.timeoutInterval = EZNetWorkTimeoutInterval }
+        )
+        .serializingData(automaticallyCancelling: true)
+        .response
+
+        if let statusCode = response.response?.statusCode,
+           !(200 ... 299).contains(statusCode) {
+            throw remoteModelError(statusCode: statusCode, data: response.data)
+        }
+        return try response.result.get()
     }
 
     /// Base on chat query, convert prompt dict to LLM service prompt model.
@@ -347,9 +519,6 @@ public class StreamService: QueryService {
         return .translation
     }
 
-    /// Cancel stream request manually.
-    func cancelStream() {}
-
     /// Content stream translate.
     /// Content is the original delta text.
     func contentStreamTranslate(
@@ -367,5 +536,35 @@ public class StreamService: QueryService {
                 )
             )
         }
+    }
+
+    // MARK: Private
+
+    private func remoteModelError(statusCode: Int, data: Data?) -> QueryError {
+        let message = data.flatMap(remoteModelErrorMessage)?.trim()
+        if let message, !message.isEmpty {
+            return QueryError(type: .api, message: message)
+        }
+        return QueryError(type: .api, message: "HTTP \(statusCode)")
+    }
+
+    private func remoteModelErrorMessage(from data: Data) -> String? {
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let error = json["error"] as? String {
+                return error
+            }
+            if let error = json["error"] as? [String: Any],
+               let message = error["message"] as? String {
+                return message
+            }
+            if let message = json["message"] as? String {
+                return message
+            }
+        }
+
+        guard let text = String(data: data, encoding: .utf8)?.trim(), !text.isEmpty else {
+            return nil
+        }
+        return String(text.prefix(300))
     }
 }
