@@ -30,7 +30,7 @@ extension YoudaoService {
         static let defaultKey = "asdjnjfenknafdfsdfsd"
     }
 
-    private var generalParameters: [String: Any] {
+    private var generalParameters: Parameters {
         [
             "client": Constants.client,
             "product": Constants.product,
@@ -46,7 +46,7 @@ extension YoudaoService {
     }
 
     func webTranslate(text: String, from: Language, to: Language) async throws
-        -> EZQueryResult {
+        -> QueryResult {
         let key = try await getYoudaoKey()
         let aesKey = key.data.aesKey
         let aesIv = key.data.aesIv

@@ -14,17 +14,18 @@ import Magnet
 class ShortcutManager: NSObject {
     @objc static let shared = ShortcutManager()
 
-    var confictMenuItem: NSMenuItem?
+    var confictShortcutTitle = ""
 
     @objc
     func setupShortcut() {
-        setupGlobalShortcutActions()
-
-        // Set default shortcut for first launch
+        // Set default shortcuts for first launch
         if Defaults[.firstLaunch] {
             Defaults[.firstLaunch] = false
             setDefaultShortcutKeys()
         }
+
+        // Bind global shortcut actions
+        setupGlobalShortcutActions()
     }
 }
 
@@ -33,7 +34,9 @@ class ShortcutManager: NSObject {
 extension ShortcutManager {
     /// Update shortcut menu
     func updateMenu(_ action: ShortcutAction) {
-        let shortcutTitle = String(localized: LocalizedStringResource(stringLiteral: action.localizedStringKey()))
+        let shortcutTitle = String(
+            localized: LocalizedStringResource(stringLiteral: action.localizedStringKey())
+        )
         let menuTitle = String(localized: LocalizedStringResource(stringLiteral: "shortcut"))
         let shortcutMenu = NSApp.mainMenu?.items.first(where: { $0.title == menuTitle })
         let clearInput = shortcutMenu?.submenu?.items.first(where: { $0.title == shortcutTitle })

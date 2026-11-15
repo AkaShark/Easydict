@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+
 struct KeyHolderRowView: View {
     // MARK: Public
 
@@ -20,10 +21,9 @@ struct KeyHolderRowView: View {
         HStack {
             Text(LocalizedStringKey(title))
             Spacer()
-            KeyHolderWrapper(shortcutType: action, confictAlterMessage: $confictAlterMessage).frame(
-                width: 180,
-                height: 26
-            )
+            KeyHolderWrapper(shortcutType: action, confictAlterMessage: $confictAlterMessage)
+                .frame(width: 150, height: 28)
+                .borderedCard()
         }
     }
 }
