@@ -15,7 +15,7 @@ import Foundation
 class BuiltInAIService: BaseOpenAIService {
     // MARK: Lifecycle
 
-    override init() {
+    required init() {
         super.init()
 
         // Set default supported models, disable user to change it.
@@ -33,6 +33,10 @@ class BuiltInAIService: BaseOpenAIService {
         .builtInAI
     }
 
+    public override func apiKeyRequirement() -> ServiceAPIKeyRequirement {
+        .builtIn
+    }
+
     public override func configurationListItems() -> Any {
         StreamConfigurationView(
             service: self,
@@ -46,8 +50,8 @@ class BuiltInAIService: BaseOpenAIService {
     override var defaultModels: [String] {
         [
             // GML free models
+            ZhipuModel.glm_4_5_flash.rawValue,
             ZhipuModel.glm_4_flash_250414.rawValue,
-            ZhipuModel.glm_4_flash.rawValue,
 
             // Groq free models
             GroqModel.llama3_1_8b_instant.rawValue,
@@ -56,6 +60,10 @@ class BuiltInAIService: BaseOpenAIService {
 
     override var defaultModel: String {
         ZhipuModel.glm_4_flash_250414.rawValue
+    }
+
+    override var canFetchRemoteModels: Bool {
+        false
     }
 
     override var apiKey: String {

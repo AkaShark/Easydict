@@ -48,6 +48,10 @@ class YoudaoService: QueryService {
         .youdao
     }
 
+    override func apiKeyRequirement() -> ServiceAPIKeyRequirement {
+        .none
+    }
+
     override func link() -> String {
         kYoudaoTranslateURL
     }
@@ -57,7 +61,7 @@ class YoudaoService: QueryService {
 
      means: en <-> zh-CHS, ja <-> zh-CHS, ko <-> zh-CHS, fr <-> zh-CHS, if language not in this list, then return nil.
      */
-    override func wordLink(_ queryModel: EZQueryModel) -> String? {
+    override func wordLink(_ queryModel: QueryModel) -> String? {
         let encodedWord = queryModel.queryText.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         guard let foreignLanguage = youdaoDictForeignLanguage(queryModel) else {
             return link()
@@ -70,7 +74,7 @@ class YoudaoService: QueryService {
     }
 
     override func intelligentQueryTextType() -> EZQueryTextType {
-        Configuration.shared.intelligentQueryTextTypeForServiceType(serviceType())
+        MyConfiguration.shared.intelligentQueryTextTypeForServiceType(serviceType())
     }
 
     // TODO: add configuration UI
@@ -95,40 +99,33 @@ class YoudaoService: QueryService {
     }
 
     // TODO: refactor QueryService, replace supportLanguagesDictionary with languagesDictionary
-    override func supportLanguagesDictionary() -> MMOrderedDictionary<AnyObject, AnyObject> {
+    override func supportLanguagesDictionary() -> MMOrderedDictionary {
         languagesDictionary.toMMOrderedDictionary()
     }
 
+    /// Translate text using Youdao API.
     override func translate(
         _ text: String,
         from: Language,
-        to: Language,
-        completion: @escaping (EZQueryResult, (any Error)?) -> ()
-    ) {
-        Task {
-            do {
-                guard !text.isEmpty else {
-                    throw QueryError(type: .parameter, message: "Translation text is empty")
-                }
-
-                let result = try await queryYoudaoDictAndTranslation(text: text, from: from, to: to)
-                completion(result, nil)
-            } catch {
-                completion(result, error)
-            }
+        to: Language
+    ) async throws
+        -> QueryResult {
+        guard !text.isEmpty else {
+            throw QueryError(type: .parameter, message: "Translation text is empty")
         }
+
+        return try await queryYoudaoDictAndTranslation(text: text, from: from, to: to)
     }
 
-    override func text(
-        toAudio text: String,
+    /// Generate audio URL using Youdao TTS.
+    override func textToAudio(
+        _ text: String,
         fromLanguage from: Language,
-        accent: String?,
-        completion: @escaping (String?, (any Error)?) -> ()
-    ) {
+        accent: String?
+    ) async throws
+        -> String? {
         guard !text.isEmpty else {
-            return completion(
-                nil, QueryError(type: .parameter, message: "Translation text is empty")
-            )
+            throw QueryError(type: .parameter, message: "Translation text is empty")
         }
 
         /**
@@ -145,7 +142,7 @@ class YoudaoService: QueryService {
         // uk: type=1, us: type=2
         let accentType = accent == "uk" ? "1" : "2"
         let audioURL = "\(kYoudaoDictURL)/dictvoice?audio=\(encodedText)&le=\(language)&type=\(accentType)"
-        completion(audioURL, nil)
+        return audioURL
     }
 
     override func getTTSLanguageCode(_ language: Language, accent: String?) -> String {
@@ -155,52 +152,37 @@ class YoudaoService: QueryService {
         return super.getTTSLanguageCode(language, accent: accent)
     }
 
+    /// Perform OCR using Youdao service.
     override func ocr(
         _ image: NSImage,
         from: Language,
-        to: Language,
-        completion: @escaping (EZOCRResult?, (any Error)?) -> ()
-    ) {
-        Task {
-            do {
-                let result = try await ocr(image: image, from: from, to: to)
-                await MainActor.run {
-                    completion(result, nil)
-                }
-            } catch {
-                await MainActor.run {
-                    completion(nil, error)
-                }
-            }
-        }
+        to: Language
+    ) async throws
+        -> EZOCRResult? {
+        try await ocr(image: image, from: from, to: to)
     }
 
+    /// Perform OCR and translation using Youdao service.
     override func ocrAndTranslate(
         _ image: NSImage,
         from: Language,
         to: Language,
-        ocrSuccess: @escaping (EZOCRResult, Bool) -> (),
-        completion: @escaping (EZOCRResult?, EZQueryResult?, (any Error)?) -> ()
-    ) {
-        Task {
-            do {
-                let ocrResult = try await ocr(image: image, from: from, to: to)
-                let queryResult = try await queryYoudaoDictAndTranslation(
-                    text: ocrResult.mergedText,
-                    from: from,
-                    to: to
-                )
-                ocrSuccess(ocrResult, queryResult.hasTranslatedResult)
-                completion(ocrResult, queryResult, nil)
-            } catch {
-                completion(nil, nil, error)
-            }
-        }
+        ocrSuccess: @escaping (EZOCRResult, Bool) -> ()
+    ) async throws
+        -> (EZOCRResult?, QueryResult?) {
+        let result = try await ocrAndTranslate(
+            image: image,
+            from: from,
+            to: to,
+            ocrSuccess: ocrSuccess
+        )
+        return (result.ocrResult, result.queryResult)
     }
 
     // MARK: Private
 
-    /// Note: The official Youdao API supports most languages, but its web page shows that only 15 languages are supported. https://fanyi.youdao.com/index.html#/
+    /// Follows the Youdao web translation API used by this service.
+    /// Do not extend this list from the official text translation API docs.
     private var languagesDictionary: [Language: String] {
         [
             .simplifiedChinese: "zh-CHS",
@@ -227,7 +209,7 @@ class YoudaoService: QueryService {
         from: Language,
         to: Language
     ) async throws
-        -> EZQueryResult {
+        -> QueryResult {
         guard !text.isEmpty else {
             throw QueryError(type: .parameter, message: "Translation text is empty")
         }
